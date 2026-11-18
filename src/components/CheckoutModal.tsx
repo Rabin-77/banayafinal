@@ -250,39 +250,6 @@ function formatTimer(totalSeconds: number): string {
   return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 }
 
-interface RazorpaySuccessPayload {
-  razorpay_order_id: string;
-  razorpay_payment_id: string;
-  razorpay_signature: string;
-}
-
-interface RazorpayCheckoutInstance {
-  open: () => void;
-  on: (event: string, cb: (resp: { error?: { description?: string } }) => void) => void;
-}
-
-type RazorpayConstructor = new (options: Record<string, unknown>) => RazorpayCheckoutInstance;
-
-async function loadRazorpayCheckoutScript(): Promise<RazorpayConstructor | null> {
-  const win = window as unknown as { Razorpay?: RazorpayConstructor };
-  if (win.Razorpay) return win.Razorpay;
-
-  return new Promise((resolve) => {
-    const existing = document.querySelector<HTMLScriptElement>('script[src="https://checkout.razorpay.com/v1/checkout.js"]');
-    if (existing) {
-      existing.addEventListener('load', () => resolve(win.Razorpay || null), { once: true });
-      existing.addEventListener('error', () => resolve(null), { once: true });
-      return;
-    }
-    const script = document.createElement('script');
-    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
-    script.async = true;
-    script.onload = () => resolve(win.Razorpay || null);
-    script.onerror = () => resolve(null);
-    document.head.appendChild(script);
-  });
-}
-
 export const CheckoutModal: React.FC = () => {
   const {
     cart,
@@ -309,7 +276,7 @@ export const CheckoutModal: React.FC = () => {
   const [gatewaySessionId, setGatewaySessionId] = useState<string>('');
   const [gatewaySecondsLeft, setGatewaySecondsLeft] = useState<number>(600);
 
-  const [selectedPayment, setSelectedPayment] = useState<PaymentOptionId>('upi');
+  const [selectedPayment, setSelectedPayment] = useState<PaymentOptionId>('gpay');
   const [selectedBankId, setSelectedBankId] = useState<string>('sbi');
   const [customerUpiId, setCustomerUpiId] = useState<string>('');
 
@@ -323,13 +290,7 @@ export const CheckoutModal: React.FC = () => {
   const [createdOrder, setCreatedOrder] = useState<Order | null>(null);
   const [liveStatus, setLiveStatus] = useState<Order['status']>('Processing');
   const [liveVerified, setLiveVerified] = useState<boolean>(false);
-  const [razorpayVerified, setRazorpayVerified] = useState<boolean>(false);
   const [liveTrackingNumber, setLiveTrackingNumber] = useState<string>('');
-  const [gatewayConfig, setGatewayConfig] = useState<{ razorpayEnabled: boolean; keyId: string | null }>({
-    razorpayEnabled: false,
-    keyId: null
-  });
-  const [isLaunchingGateway, setIsLaunchingGateway] = useState<boolean>(false);
 
   const [copiedVpa, setCopiedVpa] = useState(false);
   const [copiedAmount, setCopiedAmount] = useState(false);
@@ -347,23 +308,14 @@ export const CheckoutModal: React.FC = () => {
   const [stateName, setStateName] = useState('Tamil Nadu');
   const [pin, setPin] = useState('');
 
-  // Check if signed Payment Gateway (Razorpay) is configured on server
+  // Scroll modal back to top whenever checkout step changes so mobile customers immediately see payment QR
   useEffect(() => {
     if (activeModal !== 'checkout') return;
-    fetch('/api/payments/config')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: { razorpayEnabled?: boolean; keyId?: string | null } | null) => {
-        if (data && typeof data.razorpayEnabled === 'boolean') {
-          setGatewayConfig({
-            razorpayEnabled: data.razorpayEnabled,
-            keyId: data.keyId || null
-          });
-        }
-      })
-      .catch(() => {
-        // Fallback smoothly to Direct UPI / Net Banking
-      });
-  }, [activeModal]);
+    const container = document.getElementById('checkout-modal-container');
+    if (container) {
+      container.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [step, activeModal]);
 
   // Gateway connection animation & session countdown
   useEffect(() => {
@@ -533,18 +485,18 @@ export const CheckoutModal: React.FC = () => {
   const activeOrderDisplay: Order | null = createdOrder
     ? {
         ...createdOrder,
-        status: razorpayVerified && liveStatus === 'Processing' ? 'Confirmed' : liveStatus,
+        status: liveStatus,
         trackingNumber: liveTrackingNumber || createdOrder.trackingNumber
       }
     : null;
 
-  const isPaymentVerified = liveVerified || razorpayVerified;
+  const isPaymentVerified = liveVerified;
 
   const resetCheckoutState = () => {
     setStep('details');
     setGatewayPhase('connecting');
     setGatewaySessionId('');
-    setSelectedPayment('upi');
+    setSelectedPayment('gpay');
     setSelectedBankId('sbi');
     setCustomerUpiId('');
     setTransactionIdInput('');
@@ -556,9 +508,7 @@ export const CheckoutModal: React.FC = () => {
     setCreatedOrder(null);
     setLiveStatus('Processing');
     setLiveVerified(false);
-    setRazorpayVerified(false);
     setLiveTrackingNumber('');
-    setIsLaunchingGateway(false);
   };
 
   const handleCloseModal = () => {
@@ -593,156 +543,18 @@ export const CheckoutModal: React.FC = () => {
     setStep('payment');
   };
 
-  // Direct Pay ₹{cartTotal} trigger (Flipkart / Amazon style — Zero QR code)
-  const handleInitiateDirectPay = async () => {
+  // Direct Pay ₹{cartTotal} trigger (Direct UPI / Net Banking — no Razorpay popup)
+  const handleInitiateDirectPay = () => {
     if (cart.length === 0) {
       showToast('Empty Bag', 'Your shopping bag is empty.', 'warning');
       return;
     }
 
-    if (selectedPayment === 'upi' && customerUpiId.trim()) {
-      const cleanUpi = customerUpiId.trim();
-      if (!/^[a-zA-Z0-9._-]{2,}@[a-zA-Z0-9]{2,}$/.test(cleanUpi)) {
-        showToast(
-          'Check UPI ID Format',
-          'Please enter a valid UPI ID (for example: yourname@oksbi or yourname@ybl), or leave blank to open your UPI app directly.',
-          'warning'
-        );
-        return;
-      }
-    }
-
-    // 1) If Signed Razorpay Gateway is configured, open NPCI-signed checkout directly (zero bank limit block)
-    if (gatewayConfig.razorpayEnabled && gatewayConfig.keyId) {
-      setIsLaunchingGateway(true);
-      try {
-        const RazorpayCtor = await loadRazorpayCheckoutScript();
-        if (!RazorpayCtor) {
-          throw new Error('Could not load Razorpay payment script');
-        }
-
-        const orderRes = await fetch('/api/payments/razorpay/create-order', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            amountInr: cartTotal,
-            receipt: `BNY-${Date.now().toString().slice(-6)}`,
-            customerName: name.trim(),
-            phone: phone.trim(),
-            email: email.trim()
-          })
-        });
-
-        const orderData = (await orderRes.json()) as {
-          orderId?: string;
-          amount?: number;
-          currency?: string;
-          keyId?: string;
-          error?: string;
-        };
-
-        if (!orderRes.ok || !orderData.orderId) {
-          throw new Error(orderData.error || 'Could not initialize gateway payment');
-        }
-
-        const rzp = new RazorpayCtor({
-          key: orderData.keyId || gatewayConfig.keyId,
-          amount: orderData.amount,
-          currency: orderData.currency || 'INR',
-          name: 'Banaya Enterprise',
-          description: `Order Payment (₹${cartTotal.toLocaleString('en-IN')})`,
-          order_id: orderData.orderId,
-          prefill: {
-            name: name.trim(),
-            email: email.trim(),
-            contact: phone.trim(),
-            method: selectedPayment === 'netbanking' ? 'netbanking' : 'upi',
-            ...(selectedPayment === 'upi' && customerUpiId.trim()
-              ? { vpa: customerUpiId.trim() }
-              : {})
-          },
-          notes: {
-            store: 'Banaya Enterprise',
-            selected_option: selectedOption.label
-          },
-          theme: { color: '#064E3B' },
-          handler: async (response: RazorpaySuccessPayload) => {
-            try {
-              const verifyRes = await fetch('/api/payments/razorpay/verify', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(response)
-              });
-              const verifyData = (await verifyRes.json()) as {
-                verified?: boolean;
-                paymentId?: string;
-              };
-
-              const verifiedOk = Boolean(verifyRes.ok && verifyData.verified);
-              const paymentMethodLabel = `${
-                selectedPayment === 'netbanking' ? `Net Banking (${selectedBank.name})` : selectedOption.label
-              } (Gateway Verified)`;
-
-              const order = placeOrder({
-                customerName: name.trim(),
-                phone: phone.trim(),
-                email: email.trim(),
-                shippingAddress: `${address.trim()}, ${stateName.trim() || 'India'}`,
-                city: city.trim(),
-                postalCode: pin.trim(),
-                paymentMethod: paymentMethodLabel.slice(0, 155),
-                transactionId: response.razorpay_payment_id,
-                bankRef: response.razorpay_order_id
-              });
-
-              setCreatedOrder(order);
-              setRazorpayVerified(verifiedOk);
-              setLiveStatus(verifiedOk ? 'Confirmed' : 'Processing');
-              setLiveVerified(verifiedOk);
-              setLiveTrackingNumber(order.trackingNumber);
-              setStep('pending');
-              showToast(
-                verifiedOk ? 'Payment Verified & Order Confirmed' : 'Payment Submitted',
-                `Payment ${response.razorpay_payment_id} for ₹${cartTotal.toLocaleString('en-IN')} completed.`,
-                'success'
-              );
-            } catch {
-              showToast(
-                'Verification Pending',
-                'Payment received. Returning to order verification summary.',
-                'info'
-              );
-            }
-          }
-        });
-
-        rzp.on('payment.failed', (errResp) => {
-          showToast(
-            'Payment Incomplete',
-            errResp?.error?.description || 'Payment was cancelled or declined. You can retry safely.',
-            'warning'
-          );
-        });
-
-        rzp.open();
-        setIsLaunchingGateway(false);
-        return;
-      } catch (err) {
-        setIsLaunchingGateway(false);
-        showToast(
-          'Switching to Direct App Mode',
-          (err as Error)?.message || 'Opening direct payment app.',
-          'info'
-        );
-      }
-    }
-
-    // 2) Direct Native UPI Deep Link (upi://pay?pa=...&pn=BanayaEnterprise&am=...&cu=INR)
     if (selectedPayment !== 'netbanking') {
       try {
         window.location.href = upiIntentMap[selectedPayment];
       } catch {
-        // Gateway screen below also provides direct native upi:// launch links
+        // Gateway screen below also provides QR + direct native upi:// launch links
       }
     }
 
@@ -1507,26 +1319,19 @@ export const CheckoutModal: React.FC = () => {
                                     <button
                                       id="pay-netbanking-btn"
                                       type="button"
-                                      disabled={isLaunchingGateway}
-                                      onClick={() => void handleInitiateDirectPay()}
-                                      className="w-full sm:w-auto min-w-[230px] h-11 px-6 rounded-lg bg-[#FB641B] hover:bg-[#ea580c] disabled:opacity-60 text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer tabular-nums"
+                                      onClick={handleInitiateDirectPay}
+                                      className="w-full sm:w-auto min-w-[230px] h-11 px-6 rounded-lg bg-[#FB641B] hover:bg-[#ea580c] text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer tabular-nums"
                                     >
-                                      {isLaunchingGateway ? (
-                                        <Loader2 className="w-4 h-4 animate-spin" />
-                                      ) : (
-                                        <>
-                                          <span>Pay ₹{cartTotal.toLocaleString('en-IN')} via {selectedBank.shortName}</span>
-                                          <ArrowRight className="w-4 h-4" />
-                                        </>
-                                      )}
+                                      <span>Pay ₹{cartTotal.toLocaleString('en-IN')} via {selectedBank.shortName}</span>
+                                      <ArrowRight className="w-4 h-4" />
                                     </button>
                                     <span className="text-[11px] text-slate-500">
                                       Redirects to <strong>{selectedBank.shortName}</strong> Internet Banking to complete payment.
                                     </span>
                                   </div>
                                 </div>
-                              ) : !gatewayConfig.razorpayEnabled && !isMobileDevice ? (
-                                /* FLIPKART DESKTOP UPI SCAN & PAY QR CODE CARD (ONLY SHOWN ON DESKTOP; MOBILE LAUNCHES DIRECT APP) */
+                              ) : (
+                                /* UPI SCAN & PAY QR CODE CARD (SHOWN ON BOTH MOBILE & DESKTOP; MOBILE ALSO HAS DIRECT APP OPEN) */
                                 <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-4">
                                   <div className="flex flex-col sm:flex-row items-center sm:items-start gap-5">
                                     <div className="shrink-0 bg-slate-50 rounded-xl border border-slate-200 p-3 flex flex-col items-center gap-2">
@@ -1539,12 +1344,20 @@ export const CheckoutModal: React.FC = () => {
                                         <QrCode className="w-3.5 h-3.5 text-[#064E3B]" />
                                         Scan with {option.id === 'upi' ? 'any UPI App' : option.label}
                                       </span>
+                                      <a
+                                        href={BANAYA_UPI_QR_IMAGE}
+                                        download="banaya-enterprise-upi-qr.png"
+                                        className="w-full h-8 px-2.5 rounded-md border border-slate-300 bg-white hover:bg-slate-100 text-slate-800 text-[11px] font-semibold inline-flex items-center justify-center gap-1.5 transition-colors"
+                                      >
+                                        <Download className="w-3.5 h-3.5 text-[#064E3B]" />
+                                        <span>Save QR Image</span>
+                                      </a>
                                     </div>
 
                                     <div className="flex-1 space-y-3 text-xs w-full">
                                       <div>
                                         <div className="text-[11px] font-semibold uppercase tracking-wider text-emerald-700">
-                                          Scan &amp; Pay on Desktop ({option.label})
+                                          Scan &amp; Pay ({option.label})
                                         </div>
                                         <h4 className="text-sm sm:text-base font-bold text-slate-900 mt-0.5">
                                           Pay{' '}
@@ -1557,7 +1370,16 @@ export const CheckoutModal: React.FC = () => {
 
                                       <ol className="space-y-1.5 text-slate-600 list-decimal list-inside">
                                         <li>
-                                          Open <strong>{option.id === 'upi' ? 'Google Pay, PhonePe, Paytm or WhatsApp Pay' : option.label}</strong> on your mobile phone and tap <strong>Scan any QR</strong>.
+                                          {isMobileDevice ? (
+                                            <>
+                                              Tap <strong>Save QR Image</strong> &rarr; open{' '}
+                                              <strong>{option.id === 'upi' ? 'Google Pay, PhonePe, Paytm or WhatsApp Pay' : option.label}</strong> &rarr; <strong>Scan QR / Upload from gallery</strong> (or tap Direct Open below).
+                                            </>
+                                          ) : (
+                                            <>
+                                              Open <strong>{option.id === 'upi' ? 'Google Pay, PhonePe, Paytm or WhatsApp Pay' : option.label}</strong> on your mobile phone and tap <strong>Scan any QR</strong>.
+                                            </>
+                                          )}
                                         </li>
                                         <li>
                                           Enter exact amount{' '}
@@ -1567,7 +1389,7 @@ export const CheckoutModal: React.FC = () => {
                                           and complete payment with your UPI PIN.
                                         </li>
                                         <li>
-                                          Click below to enter your 12-digit UTR / Transaction ID for instant order verification.
+                                          Tap <strong>Submit UTR ID</strong> below to enter your 12-digit UTR / Transaction ID for order verification.
                                         </li>
                                       </ol>
 
@@ -1598,141 +1420,38 @@ export const CheckoutModal: React.FC = () => {
                                         </button>
                                       </div>
 
-                                      <button
-                                        id={`pay-${option.id}-btn`}
-                                        type="button"
-                                        onClick={handleOpenGatewayForDesktopQr}
-                                        className="w-full sm:w-auto min-w-[250px] h-11 px-6 rounded-lg bg-[#FB641B] hover:bg-[#ea580c] text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer tabular-nums"
-                                      >
-                                        <span>I Paid ₹{cartTotal.toLocaleString('en-IN')} — Submit UTR ID</span>
-                                        <ArrowRight className="w-4 h-4" />
-                                      </button>
+                                      <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2.5 pt-1">
+                                        {isMobileDevice && (
+                                          <a
+                                            id={`direct-${option.id}-btn`}
+                                            href={upiIntentMap[option.id]}
+                                            onClick={(e) => handleDirectAnchorStepTransition(e, option.label)}
+                                            className="h-11 px-5 rounded-lg bg-[#064E3B] hover:bg-[#047857] text-white font-semibold text-sm inline-flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer tabular-nums"
+                                          >
+                                            <Smartphone className="w-4 h-4" />
+                                            <span>Open {option.label} (₹{cartTotal.toLocaleString('en-IN')})</span>
+                                          </a>
+                                        )}
+
+                                        <button
+                                          id={`pay-${option.id}-btn`}
+                                          type="button"
+                                          onClick={handleOpenGatewayForDesktopQr}
+                                          className="min-w-[230px] h-11 px-5 rounded-lg bg-[#FB641B] hover:bg-[#ea580c] text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer tabular-nums"
+                                        >
+                                          <span>I Paid ₹{cartTotal.toLocaleString('en-IN')} — Submit UTR ID</span>
+                                          <ArrowRight className="w-4 h-4" />
+                                        </button>
+                                      </div>
+
+                                      <p className="text-[11px] text-slate-500 flex items-start gap-1.5 leading-relaxed">
+                                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-700 shrink-0 mt-0.5" />
+                                        <span>
+                                          We never ask for your UPI PIN here. Your UPI app shows an NPCI safety reminder (&ldquo;Never enter your UPI PIN to receive money&rdquo;) because PIN is only for <strong>paying</strong> your order amount to <strong>Banaya Enterprise</strong>.
+                                        </span>
+                                      </p>
                                     </div>
                                   </div>
-                                </div>
-                              ) : option.id === 'upi' ? (
-                                /* MOBILE DIRECT UPI PAY (NO QR CODE ON MOBILE) */
-                                <div className="space-y-3 max-w-md">
-                                  <div>
-                                    <label
-                                      htmlFor="checkout-upi-id"
-                                      className="block text-xs font-semibold text-slate-700 mb-1"
-                                    >
-                                      Enter your UPI ID
-                                    </label>
-                                    <input
-                                      id="checkout-upi-id"
-                                      type="text"
-                                      value={customerUpiId}
-                                      onChange={(e) => setCustomerUpiId(e.target.value)}
-                                      placeholder="yourname@oksbi or yourname@ybl"
-                                      className="w-full h-10 px-3 rounded-lg border border-slate-300 bg-white font-mono text-sm text-slate-900 placeholder:font-sans placeholder:text-slate-400 focus:outline-hidden focus:border-[#064E3B]"
-                                    />
-                                    <p className="text-[11px] text-slate-500 mt-1">
-                                      Clicking Pay opens your UPI app directly with ₹{cartTotal.toLocaleString('en-IN')} ready.
-                                    </p>
-                                  </div>
-
-                                  {!gatewayConfig.razorpayEnabled ? (
-                                    <a
-                                      id="pay-upi-btn"
-                                      href={upiIntentMap.upi}
-                                      onClick={(e) => handleDirectAnchorStepTransition(e, 'UPI App')}
-                                      className="w-full sm:w-auto sm:inline-flex min-w-[230px] h-11 px-6 rounded-lg bg-[#FB641B] hover:bg-[#ea580c] text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer tabular-nums"
-                                    >
-                                      <span>Pay ₹{cartTotal.toLocaleString('en-IN')} via UPI</span>
-                                      <ArrowRight className="w-4 h-4" />
-                                    </a>
-                                  ) : (
-                                    <button
-                                      id="pay-upi-btn"
-                                      type="button"
-                                      disabled={isLaunchingGateway}
-                                      onClick={() => void handleInitiateDirectPay()}
-                                      className="w-full sm:w-auto min-w-[230px] h-11 px-6 rounded-lg bg-[#FB641B] hover:bg-[#ea580c] disabled:opacity-60 text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer tabular-nums"
-                                    >
-                                      {isLaunchingGateway ? (
-                                        <Loader2 className="w-4 h-4 animate-spin" />
-                                      ) : (
-                                        <>
-                                          <span>Pay ₹{cartTotal.toLocaleString('en-IN')} via UPI</span>
-                                          <ArrowRight className="w-4 h-4" />
-                                        </>
-                                      )}
-                                    </button>
-                                  )}
-                                  <p className="text-[11px] text-slate-500 flex items-start gap-1.5 leading-relaxed">
-                                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-700 shrink-0 mt-0.5" />
-                                    <span>
-                                      We never ask for your UPI PIN here. Your UPI app shows an NPCI safety reminder (&ldquo;Never enter your UPI PIN to receive money&rdquo;) because PIN is only for <strong>paying</strong> your order amount to <strong>Banaya Enterprise</strong>.
-                                    </span>
-                                  </p>
-                                </div>
-                              ) : (
-                                /* MOBILE DIRECT GOOGLE PAY / PHONEPE / PAYTM PAY (NO QR CODE ON MOBILE) */
-                                <div className="space-y-3">
-                                  <p className="text-xs text-slate-600">
-                                    Clicking Pay opens <strong>{option.label}</strong> directly with{' '}
-                                    <strong className="text-slate-900 tabular-nums">
-                                      ₹{cartTotal.toLocaleString('en-IN')}
-                                    </strong>{' '}
-                                    pre-filled to <strong>Banaya Enterprise</strong>. After paying, you return to the order confirmation screen.
-                                  </p>
-                                  {!gatewayConfig.razorpayEnabled ? (
-                                    <a
-                                      id={`pay-${option.id}-btn`}
-                                      href={upiIntentMap[option.id]}
-                                      onClick={(e) => handleDirectAnchorStepTransition(e, option.label)}
-                                      className="w-full sm:w-auto sm:inline-flex min-w-[240px] h-11 px-6 rounded-lg bg-[#FB641B] hover:bg-[#ea580c] text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer tabular-nums"
-                                    >
-                                      <span>Pay ₹{cartTotal.toLocaleString('en-IN')} with {option.label}</span>
-                                      <ArrowRight className="w-4 h-4" />
-                                    </a>
-                                  ) : (
-                                    <button
-                                      id={`pay-${option.id}-btn`}
-                                      type="button"
-                                      disabled={isLaunchingGateway}
-                                      onClick={() => void handleInitiateDirectPay()}
-                                      className="w-full sm:w-auto min-w-[240px] h-11 px-6 rounded-lg bg-[#FB641B] hover:bg-[#ea580c] disabled:opacity-60 text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer tabular-nums"
-                                    >
-                                      {isLaunchingGateway ? (
-                                        <Loader2 className="w-4 h-4 animate-spin" />
-                                      ) : (
-                                        <>
-                                          <span>Pay ₹{cartTotal.toLocaleString('en-IN')} with {option.label}</span>
-                                          <ArrowRight className="w-4 h-4" />
-                                        </>
-                                      )}
-                                    </button>
-                                  )}
-                                  <p className="text-[11px] text-slate-500 flex items-start gap-1.5 leading-relaxed">
-                                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-700 shrink-0 mt-0.5" />
-                                    <span>
-                                      We never ask for your UPI PIN here. {option.label} shows an NPCI safety reminder (&ldquo;Never enter your UPI PIN to receive money&rdquo;) because PIN is only for <strong>paying</strong> your order amount to <strong>Banaya Enterprise</strong>.
-                                    </span>
-                                  </p>
-                                  {(option.id === 'gpay' || option.id === 'phonepe') && !gatewayConfig.razorpayEnabled && (
-                                    <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200/80 rounded-lg px-3 py-2 leading-relaxed">
-                                      If {option.label} shows &ldquo;exceeded bank limit&rdquo;, your money is <strong>not debited</strong> &mdash; tap{' '}
-                                      <button
-                                        type="button"
-                                        onClick={() => setSelectedPayment('upi')}
-                                        className="font-semibold underline text-[#064E3B] cursor-pointer"
-                                      >
-                                        UPI Payment (WhatsApp Pay)
-                                      </button>{' '}
-                                      or{' '}
-                                      <button
-                                        type="button"
-                                        onClick={() => setSelectedPayment('netbanking')}
-                                        className="font-semibold underline text-[#064E3B] cursor-pointer"
-                                      >
-                                        Net Banking
-                                      </button>{' '}
-                                      to complete ₹{cartTotal.toLocaleString('en-IN')} instantly.
-                                    </p>
-                                  )}
                                 </div>
                               )}
                             </div>
@@ -2044,23 +1763,31 @@ export const CheckoutModal: React.FC = () => {
                     ) : (
                       <div className="space-y-4">
                         {/* Primary Single or Split Payment Launcher */}
-                        {!isMobileDevice && !splitMode && (
+                        {!splitMode && (
                           <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/70 flex flex-col sm:flex-row items-center gap-4">
-                            <img
-                              src={BANAYA_UPI_QR_IMAGE}
-                              alt="Banaya Enterprise UPI QR Code"
-                              className="w-36 h-auto rounded-lg object-contain bg-white border border-slate-200 shrink-0"
-                            />
+                            <div className="shrink-0 flex flex-col items-center gap-2">
+                              <img
+                                src={BANAYA_UPI_QR_IMAGE}
+                                alt="Banaya Enterprise UPI QR Code"
+                                className="w-36 h-auto rounded-lg object-contain bg-white border border-slate-200"
+                              />
+                              <a
+                                href={BANAYA_UPI_QR_IMAGE}
+                                download="banaya-enterprise-upi-qr.png"
+                                className="w-full h-7 px-2 rounded border border-slate-300 bg-white hover:bg-slate-100 text-slate-800 text-[11px] font-semibold inline-flex items-center justify-center gap-1 transition-colors"
+                              >
+                                <Download className="w-3 h-3 text-[#064E3B]" />
+                                <span>Save QR</span>
+                              </a>
+                            </div>
                             <div className="space-y-2 text-xs">
                               <div className="font-semibold text-slate-900 text-sm">
-                                Step 1: Scan &amp; Pay ₹{cartTotal.toLocaleString('en-IN')} via {selectedOption.label}
+                                Step 1: Scan or Save QR &amp; Pay ₹{cartTotal.toLocaleString('en-IN')} via {selectedOption.label}
                               </div>
                               <p className="text-slate-600 leading-relaxed">
-                                Scan this QR code from your mobile phone ({selectedOption.label} / any UPI app), pay{' '}
-                                <strong className="text-slate-900 tabular-nums">
-                                  ₹{cartTotal.toLocaleString('en-IN')}
-                                </strong>
-                                , and enter your 12-digit UTR / Transaction ID below.
+                                {isMobileDevice
+                                  ? `Save this QR code to pay from ${selectedOption.label} / any UPI app gallery (avoids bank limit errors), scan from another phone, or tap Direct Open below. Then enter your 12-digit UTR / Transaction ID.`
+                                  : `Scan this QR code from your mobile phone (${selectedOption.label} / any UPI app), pay ₹${cartTotal.toLocaleString('en-IN')}, and enter your 12-digit UTR / Transaction ID below.`}
                               </p>
                               <div className="flex flex-wrap items-center gap-2">
                                 <button
