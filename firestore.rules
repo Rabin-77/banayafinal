@@ -1,0 +1,369 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Default Deny Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Core Identity & Path Primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isVerifiedUser() && (
+        request.auth.token.email in ['banayaenterprise100@gmail.com', 'banayaenterprises@gmail.com'] ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // Validation Helpers
+    function isValidProduct(data, productId) {
+      return data.keys().hasAll([
+        'id', 'name', 'category', 'categorySlug', 'price', 'originalPrice',
+        'inStock', 'weightOptions', 'defaultWeight', 'image', 'gallery',
+        'updatedBy', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'id', 'name', 'tamilName', 'tagline', 'category', 'categorySlug',
+        'price', 'originalPrice', 'rating', 'reviewsCount', 'inStock',
+        'weightOptions', 'defaultWeight', 'badges', 'image', 'gallery',
+        'description', 'ingredients', 'keyBenefits', 'howToUse',
+        'storageInfo', 'origin', 'isBestSeller', 'isNew',
+        'updatedBy', 'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.id) &&
+      data.id == productId &&
+      data.name is string && data.name.size() >= 1 && data.name.size() <= 160 &&
+      (!('tamilName' in data) || (data.tamilName is string && data.tamilName.size() <= 160)) &&
+      (!('tagline' in data) || (data.tagline is string && data.tagline.size() <= 300)) &&
+      data.category is string && data.category.size() >= 1 && data.category.size() <= 100 &&
+      data.categorySlug is string && data.categorySlug.size() >= 1 && data.categorySlug.size() <= 100 &&
+      data.price is number && data.price > 0 && data.price <= 1000000 &&
+      data.originalPrice is number && data.originalPrice > 0 && data.originalPrice <= 1000000 &&
+      (!('rating' in data) || (data.rating is number && data.rating >= 0 && data.rating <= 5)) &&
+      (!('reviewsCount' in data) || (data.reviewsCount is number && data.reviewsCount >= 0 && data.reviewsCount <= 1000000)) &&
+      data.inStock is bool &&
+      data.weightOptions is list && data.weightOptions.size() >= 1 && data.weightOptions.size() <= 10 &&
+      data.weightOptions[0] is string && data.weightOptions[0].size() <= 40 &&
+      data.defaultWeight is string && data.defaultWeight.size() >= 1 && data.defaultWeight.size() <= 40 &&
+      (!('badges' in data) || (data.badges is list && data.badges.size() <= 10 && (data.badges.size() == 0 || (data.badges[0] is string && data.badges[0].size() <= 60)))) &&
+      data.image is string && data.image.size() >= 1 && data.image.size() <= 250000 &&
+      data.gallery is list && data.gallery.size() >= 1 && data.gallery.size() <= 8 &&
+      data.gallery[0] is string && data.gallery[0].size() >= 1 && data.gallery[0].size() <= 250000 &&
+      (!('description' in data) || (data.description is string && data.description.size() <= 3000)) &&
+      (!('ingredients' in data) || (data.ingredients is list && data.ingredients.size() <= 25 && (data.ingredients.size() == 0 || (data.ingredients[0] is string && data.ingredients[0].size() <= 200)))) &&
+      (!('keyBenefits' in data) || (data.keyBenefits is list && data.keyBenefits.size() <= 20 && (data.keyBenefits.size() == 0 || (data.keyBenefits[0] is string && data.keyBenefits[0].size() <= 300)))) &&
+      (!('howToUse' in data) || (data.howToUse is string && data.howToUse.size() <= 1500)) &&
+      (!('storageInfo' in data) || (data.storageInfo is string && data.storageInfo.size() <= 1000)) &&
+      (!('origin' in data) || (data.origin is string && data.origin.size() <= 200)) &&
+      (!('isBestSeller' in data) || data.isBestSeller is bool) &&
+      (!('isNew' in data) || data.isNew is bool) &&
+      data.updatedBy is string && data.updatedBy == request.auth.uid && data.updatedBy.size() <= 128 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidMediaFolder(data, folderId) {
+      return data.keys().hasAll(['id', 'name', 'ownerUid', 'createdAt', 'updatedAt']) &&
+      data.keys().hasOnly(['id', 'name', 'ownerUid', 'createdAt', 'updatedAt']) &&
+      isValidId(data.id) &&
+      data.id == folderId &&
+      data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+      data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidMediaFolderImage(data, folderId, imageId) {
+      return data.keys().hasAll(['id', 'folderId', 'name', 'url', 'ownerUid', 'createdAt', 'updatedAt']) &&
+      data.keys().hasOnly(['id', 'folderId', 'name', 'url', 'ownerUid', 'createdAt', 'updatedAt']) &&
+      isValidId(data.id) &&
+      data.id == imageId &&
+      isValidId(data.folderId) &&
+      data.folderId == folderId &&
+      data.name is string && data.name.size() >= 1 && data.name.size() <= 160 &&
+      data.url is string && data.url.size() >= 1 && data.url.size() <= 300000 &&
+      data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidOrder(data, orderId) {
+      return data.keys().hasAll([
+        'id', 'date', 'items', 'subtotal', 'discount', 'shipping', 'totalAmount',
+        'status', 'customerName', 'phone', 'shippingAddress', 'city',
+        'postalCode', 'paymentMethod', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'id', 'receiptNumber', 'date', 'items', 'subtotal', 'discount', 'shipping', 'totalAmount',
+        'status', 'customerName', 'phone', 'email', 'shippingAddress', 'city',
+        'postalCode', 'paymentMethod', 'trackingNumber', 'transactionId',
+        'bankRef', 'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.id) &&
+      data.id == orderId &&
+      (!('receiptNumber' in data) || (data.receiptNumber is string && data.receiptNumber.size() <= 128)) &&
+      data.date is string && data.date.size() >= 4 && data.date.size() <= 40 &&
+      data.items is list && data.items.size() >= 1 && data.items.size() <= 30 &&
+      data.items[0] is map &&
+      data.subtotal is number && data.subtotal >= 0 &&
+      data.discount is number && data.discount >= 0 &&
+      data.shipping is number && data.shipping >= 0 &&
+      data.totalAmount is number && data.totalAmount >= 0 &&
+      data.status in ['Processing', 'Confirmed', 'Shipped', 'Out for Delivery', 'Delivered'] &&
+      data.customerName is string && data.customerName.size() >= 1 && data.customerName.size() <= 160 &&
+      data.phone is string && data.phone.size() >= 6 && data.phone.size() <= 40 &&
+      (!('email' in data) || (data.email is string && data.email.size() <= 160)) &&
+      data.shippingAddress is string && data.shippingAddress.size() >= 1 && data.shippingAddress.size() <= 400 &&
+      data.city is string && data.city.size() >= 1 && data.city.size() <= 100 &&
+      data.postalCode is string && data.postalCode.size() >= 3 && data.postalCode.size() <= 20 &&
+      data.paymentMethod is string && data.paymentMethod.size() >= 1 && data.paymentMethod.size() <= 160 &&
+      (!('trackingNumber' in data) || (data.trackingNumber is string && data.trackingNumber.size() <= 100)) &&
+      (!('transactionId' in data) || (data.transactionId is string && data.transactionId.size() <= 120)) &&
+      (!('bankRef' in data) || (data.bankRef is string && data.bankRef.size() <= 120)) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidAdminNote(data, orderId) {
+      return data.keys().hasAll(['orderId', 'note', 'updatedBy', 'createdAt', 'updatedAt']) &&
+      data.keys().hasOnly(['orderId', 'note', 'updatedBy', 'createdAt', 'updatedAt']) &&
+      isValidId(data.orderId) &&
+      data.orderId == orderId &&
+      data.note is string && data.note.size() <= 1000 &&
+      data.updatedBy is string && data.updatedBy == request.auth.uid && data.updatedBy.size() <= 128 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // 1. Live Storefront Product Catalog (Public Read, Verified Admin Write)
+    match /products/{productId} {
+      allow get: if isValidId(productId);
+      allow list: if true;
+      allow create: if isAdmin() &&
+        isValidId(productId) &&
+        isValidProduct(incoming(), productId) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isAdmin() &&
+        isValidId(productId) &&
+        isValidProduct(incoming(), productId) &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'name', 'tamilName', 'tagline', 'category', 'categorySlug',
+          'price', 'originalPrice', 'rating', 'reviewsCount', 'inStock',
+          'weightOptions', 'defaultWeight', 'badges', 'image', 'gallery',
+          'description', 'ingredients', 'keyBenefits', 'howToUse',
+          'storageInfo', 'origin', 'isBestSeller', 'isNew',
+          'updatedBy', 'updatedAt'
+        ]);
+      allow delete: if isAdmin() && isValidId(productId);
+    }
+
+    // 2. Admin Image Folders Library (Admin Only)
+    match /mediaFolders/{folderId} {
+      allow get: if isAdmin() && isValidId(folderId);
+      allow list: if isAdmin();
+      allow create: if isAdmin() &&
+        isValidId(folderId) &&
+        isValidMediaFolder(incoming(), folderId) &&
+        incoming().ownerUid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isAdmin() &&
+        isValidId(folderId) &&
+        isValidMediaFolder(incoming(), folderId) &&
+        incoming().ownerUid == existing().ownerUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['name', 'updatedAt']);
+      allow delete: if isAdmin() && isValidId(folderId);
+
+      // Subcollection of Images inside Folder (Master Gate checks parent folder exists)
+      match /images/{imageId} {
+        allow get: if isAdmin() && isValidId(folderId) && isValidId(imageId) &&
+          exists(/databases/$(database)/documents/mediaFolders/$(folderId));
+        allow list: if isAdmin() && isValidId(folderId);
+        allow create: if isAdmin() &&
+          isValidId(folderId) &&
+          isValidId(imageId) &&
+          exists(/databases/$(database)/documents/mediaFolders/$(folderId)) &&
+          isValidMediaFolderImage(incoming(), folderId, imageId) &&
+          incoming().ownerUid == request.auth.uid &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time;
+        allow update: if isAdmin() &&
+          isValidId(folderId) &&
+          isValidId(imageId) &&
+          exists(/databases/$(database)/documents/mediaFolders/$(folderId)) &&
+          isValidMediaFolderImage(incoming(), folderId, imageId) &&
+          incoming().ownerUid == existing().ownerUid &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'url', 'updatedAt']);
+        allow delete: if isAdmin() && isValidId(folderId) && isValidId(imageId);
+      }
+    }
+
+    // 3. Customer Orders (Strict PII Protection: Admin Read/Modify; Validated Checkout Create)
+    match /orders/{orderId} {
+      allow get: if isAdmin() && isValidId(orderId);
+      allow list: if isAdmin();
+      allow create: if isValidId(orderId) &&
+        isValidOrder(incoming(), orderId) &&
+        (incoming().status == 'Processing' || (isAdmin() && incoming().status in ['Processing', 'Confirmed'])) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isAdmin() &&
+        isValidId(orderId) &&
+        isValidOrder(incoming(), orderId) &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'trackingNumber', 'updatedAt']);
+      allow delete: if isAdmin() && isValidId(orderId);
+    }
+
+    // 4. Internal Admin Notes on Orders (Admin Only)
+    match /adminNotes/{orderId} {
+      allow get: if isAdmin() && isValidId(orderId);
+      allow list: if isAdmin();
+      allow create: if isAdmin() &&
+        isValidId(orderId) &&
+        isValidAdminNote(incoming(), orderId) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isAdmin() &&
+        isValidId(orderId) &&
+        isValidAdminNote(incoming(), orderId) &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['note', 'updatedBy', 'updatedAt']);
+      allow delete: if isAdmin() && isValidId(orderId);
+    }
+
+    function isValidAdminUser(data, userId) {
+      return data.keys().hasAll(['uid', 'email', 'createdAt']) &&
+      data.keys().hasOnly(['uid', 'email', 'createdAt']) &&
+      isValidId(data.uid) &&
+      data.uid == userId &&
+      data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+      data.createdAt is timestamp;
+    }
+
+    // 5. Admin Registry (Admin Write, Self or Admin Read)
+    match /admins/{userId} {
+      allow get: if isVerifiedUser() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isAdmin() &&
+        isValidId(userId) &&
+        isValidAdminUser(incoming(), userId) &&
+        incoming().createdAt == request.time;
+      allow update: if isAdmin() &&
+        isValidId(userId) &&
+        isValidAdminUser(incoming(), userId) &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['email']);
+      allow delete: if isAdmin() && isValidId(userId);
+    }
+
+    function isValidOrderStatus(data, orderId) {
+      return data.keys().hasAll(['orderId', 'status', 'paymentVerified', 'createdAt', 'updatedAt']) &&
+      data.keys().hasOnly(['orderId', 'receiptNumber', 'status', 'paymentVerified', 'trackingNumber', 'createdAt', 'updatedAt']) &&
+      isValidId(data.orderId) &&
+      data.orderId == orderId &&
+      (!('receiptNumber' in data) || (data.receiptNumber is string && data.receiptNumber.size() <= 128)) &&
+      data.status in ['Processing', 'Confirmed', 'Shipped', 'Out for Delivery', 'Delivered'] &&
+      data.paymentVerified is bool &&
+      (!('trackingNumber' in data) || (data.trackingNumber is string && data.trackingNumber.size() <= 100)) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // 6. Non-PII Live Payment Verification & Order Status (Exact ID Read, Admin Verify Write)
+    match /orderStatus/{orderId} {
+      allow get: if isValidId(orderId);
+      allow list: if false;
+      allow create: if isValidId(orderId) &&
+        isValidOrderStatus(incoming(), orderId) &&
+        ((incoming().status == 'Processing' && incoming().paymentVerified == false) || isAdmin()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isAdmin() &&
+        isValidId(orderId) &&
+        isValidOrderStatus(incoming(), orderId) &&
+        incoming().orderId == existing().orderId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'paymentVerified', 'trackingNumber', 'updatedAt']);
+      allow delete: if isAdmin() && isValidId(orderId);
+    }
+
+    function isValidAdminAlert(data, orderId) {
+      return data.keys().hasAll([
+        'orderId', 'receiptNumber', 'customerName', 'phone', 'totalAmount',
+        'paymentMethod', 'alertStatus', 'customerNotified', 'emailSent',
+        'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'orderId', 'receiptNumber', 'customerName', 'phone', 'email',
+        'totalAmount', 'paymentMethod', 'transactionId', 'itemsSummary',
+        'alertStatus', 'customerNotified', 'emailSent', 'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.orderId) &&
+      data.orderId == orderId &&
+      data.receiptNumber is string && data.receiptNumber.size() >= 1 && data.receiptNumber.size() <= 128 &&
+      data.customerName is string && data.customerName.size() >= 1 && data.customerName.size() <= 160 &&
+      data.phone is string && data.phone.size() >= 6 && data.phone.size() <= 40 &&
+      (!('email' in data) || (data.email is string && data.email.size() <= 160)) &&
+      data.totalAmount is number && data.totalAmount >= 0 &&
+      data.paymentMethod is string && data.paymentMethod.size() >= 1 && data.paymentMethod.size() <= 160 &&
+      (!('transactionId' in data) || (data.transactionId is string && data.transactionId.size() <= 120)) &&
+      (!('itemsSummary' in data) || (data.itemsSummary is string && data.itemsSummary.size() <= 600)) &&
+      data.alertStatus in ['unread', 'acknowledged', 'verified'] &&
+      data.customerNotified is bool &&
+      data.emailSent is bool &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // 7. Real-Time Admin Order Receipt Alerts (Admin Read/Modify, Atomic Checkout Batch Create)
+    match /adminAlerts/{orderId} {
+      allow get: if isAdmin() && isValidId(orderId);
+      allow list: if isAdmin();
+      allow create: if isValidId(orderId) &&
+        isValidAdminAlert(incoming(), orderId) &&
+        ((incoming().alertStatus == 'unread' && incoming().customerNotified == false && existsAfter(/databases/$(database)/documents/orders/$(orderId))) || isAdmin()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isAdmin() &&
+        isValidId(orderId) &&
+        isValidAdminAlert(incoming(), orderId) &&
+        incoming().orderId == existing().orderId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['alertStatus', 'customerNotified', 'emailSent', 'updatedAt']);
+      allow delete: if isAdmin() && isValidId(orderId);
+    }
+  }
+}

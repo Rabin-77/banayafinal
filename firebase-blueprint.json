@@ -1,0 +1,673 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Storefront catalog product with multi-angle static or optimized imagery, pricing, and stock state.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique product slug identifier",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "description": "Product display title in English",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "tamilName": {
+          "type": "string",
+          "description": "Optional Tamil product name",
+          "maxLength": 160
+        },
+        "tagline": {
+          "type": "string",
+          "description": "Short marketing subtitle",
+          "maxLength": 300
+        },
+        "category": {
+          "type": "string",
+          "description": "Category display name",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "categorySlug": {
+          "type": "string",
+          "description": "Category filter slug",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "price": {
+          "type": "number",
+          "description": "Current customer selling price in INR"
+        },
+        "originalPrice": {
+          "type": "number",
+          "description": "MRP or original price in INR"
+        },
+        "rating": {
+          "type": "number",
+          "description": "Product rating out of 5"
+        },
+        "reviewsCount": {
+          "type": "number",
+          "description": "Total verified review count"
+        },
+        "inStock": {
+          "type": "boolean",
+          "description": "Whether the product is currently available for purchase"
+        },
+        "weightOptions": {
+          "type": "array",
+          "description": "Selectable pack sizes or weights (max 10)"
+        },
+        "defaultWeight": {
+          "type": "string",
+          "description": "Default pack size",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "badges": {
+          "type": "array",
+          "description": "Product highlight badges (max 10)"
+        },
+        "image": {
+          "type": "string",
+          "description": "Primary front image path (/images/...) or compact data URL",
+          "minLength": 1,
+          "maxLength": 250000
+        },
+        "gallery": {
+          "type": "array",
+          "description": "Ordered list of primary and secondary product image URLs (max 8)"
+        },
+        "description": {
+          "type": "string",
+          "description": "Detailed product description",
+          "maxLength": 3000
+        },
+        "ingredients": {
+          "type": "array",
+          "description": "List of natural ingredients (max 25)"
+        },
+        "keyBenefits": {
+          "type": "array",
+          "description": "List of health benefits (max 20)"
+        },
+        "howToUse": {
+          "type": "string",
+          "description": "Usage and dosage instructions",
+          "maxLength": 1500
+        },
+        "storageInfo": {
+          "type": "string",
+          "description": "Storage guidelines",
+          "maxLength": 1000
+        },
+        "origin": {
+          "type": "string",
+          "description": "Sourcing origin",
+          "maxLength": 200
+        },
+        "isBestSeller": {
+          "type": "boolean",
+          "description": "Whether highlighted as best seller"
+        },
+        "isNew": {
+          "type": "boolean",
+          "description": "Whether highlighted as new arrival"
+        },
+        "updatedBy": {
+          "type": "string",
+          "description": "UID of admin who last updated the product",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server last-modified timestamp"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "category",
+        "categorySlug",
+        "price",
+        "originalPrice",
+        "inStock",
+        "weightOptions",
+        "defaultWeight",
+        "image",
+        "gallery",
+        "updatedBy",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MediaFolder": {
+      "title": "MediaFolder",
+      "description": "Admin image library folder container.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique folder identifier",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "description": "Folder display title",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "ownerUid": {
+          "type": "string",
+          "description": "UID of admin creator",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "ownerUid",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MediaFolderImage": {
+      "title": "MediaFolderImage",
+      "description": "Individual product image asset inside a media folder subcollection.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique image identifier",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "folderId": {
+          "type": "string",
+          "description": "Parent folder ID",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "description": "Display label for image",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "url": {
+          "type": "string",
+          "description": "Static /images/... path or compact optimized image data URL",
+          "minLength": 1,
+          "maxLength": 300000
+        },
+        "ownerUid": {
+          "type": "string",
+          "description": "UID of admin uploader",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server upload timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp"
+        }
+      },
+      "required": [
+        "id",
+        "folderId",
+        "name",
+        "url",
+        "ownerUid",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer order record with restricted PII access.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Order ID",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "receiptNumber": {
+          "type": "string",
+          "description": "Official receipt reference (e.g. RCP-BNY-12345)",
+          "maxLength": 128
+        },
+        "date": {
+          "type": "string",
+          "description": "ISO order date",
+          "minLength": 4,
+          "maxLength": 40
+        },
+        "items": {
+          "type": "array",
+          "description": "Purchased items summary (max 30 items)"
+        },
+        "subtotal": {
+          "type": "number",
+          "description": "Order subtotal in INR"
+        },
+        "discount": {
+          "type": "number",
+          "description": "Applied discount in INR"
+        },
+        "shipping": {
+          "type": "number",
+          "description": "Shipping fee in INR"
+        },
+        "totalAmount": {
+          "type": "number",
+          "description": "Final order total in INR"
+        },
+        "status": {
+          "type": "string",
+          "description": "Order fulfillment status",
+          "enum": [
+            "Processing",
+            "Confirmed",
+            "Shipped",
+            "Out for Delivery",
+            "Delivered"
+          ]
+        },
+        "customerName": {
+          "type": "string",
+          "description": "Customer full name",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "phone": {
+          "type": "string",
+          "description": "Customer phone number",
+          "minLength": 6,
+          "maxLength": 40
+        },
+        "email": {
+          "type": "string",
+          "description": "Customer email address",
+          "maxLength": 160
+        },
+        "shippingAddress": {
+          "type": "string",
+          "description": "Delivery street address",
+          "minLength": 1,
+          "maxLength": 400
+        },
+        "city": {
+          "type": "string",
+          "description": "Delivery city",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "postalCode": {
+          "type": "string",
+          "description": "Postal PIN code",
+          "minLength": 3,
+          "maxLength": 20
+        },
+        "paymentMethod": {
+          "type": "string",
+          "description": "Selected payment method",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "trackingNumber": {
+          "type": "string",
+          "description": "Courier tracking code",
+          "maxLength": 100
+        },
+        "transactionId": {
+          "type": "string",
+          "description": "Payment transaction reference",
+          "maxLength": 120
+        },
+        "bankRef": {
+          "type": "string",
+          "description": "Bank UTR reference",
+          "maxLength": 120
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp"
+        }
+      },
+      "required": [
+        "id",
+        "date",
+        "items",
+        "subtotal",
+        "discount",
+        "shipping",
+        "totalAmount",
+        "status",
+        "customerName",
+        "phone",
+        "shippingAddress",
+        "city",
+        "postalCode",
+        "paymentMethod",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AdminNote": {
+      "title": "AdminNote",
+      "description": "Internal administrator order note.",
+      "type": "object",
+      "properties": {
+        "orderId": {
+          "type": "string",
+          "description": "Associated order ID",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "note": {
+          "type": "string",
+          "description": "Admin internal note text",
+          "maxLength": 1000
+        },
+        "updatedBy": {
+          "type": "string",
+          "description": "UID of admin author",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last modified timestamp"
+        }
+      },
+      "required": [
+        "orderId",
+        "note",
+        "updatedBy",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Authorized store administrator registry entry.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "email": {
+          "type": "string",
+          "description": "Admin email address",
+          "minLength": 3,
+          "maxLength": 160
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Grant timestamp"
+        }
+      },
+      "required": [
+        "uid",
+        "email",
+        "createdAt"
+      ]
+    },
+    "OrderStatusPublic": {
+      "title": "OrderStatusPublic",
+      "description": "Non-PII payment verification and shipment milestone status for real-time customer tracking.",
+      "type": "object",
+      "properties": {
+        "orderId": {
+          "type": "string",
+          "description": "Order ID matching /orders/{orderId}",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "receiptNumber": {
+          "type": "string",
+          "description": "Official receipt reference (e.g. RCP-BNY-12345)",
+          "maxLength": 128
+        },
+        "status": {
+          "type": "string",
+          "description": "Order fulfillment status",
+          "enum": [
+            "Processing",
+            "Confirmed",
+            "Shipped",
+            "Out for Delivery",
+            "Delivered"
+          ]
+        },
+        "paymentVerified": {
+          "type": "boolean",
+          "description": "Whether store admin has verified payment settlement"
+        },
+        "trackingNumber": {
+          "type": "string",
+          "description": "Courier tracking code",
+          "maxLength": 100
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last status update timestamp"
+        }
+      },
+      "required": [
+        "orderId",
+        "status",
+        "paymentVerified",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AdminAlert": {
+      "title": "AdminAlert",
+      "description": "Automatic store admin payment receipt alert generated upon customer checkout.",
+      "type": "object",
+      "properties": {
+        "orderId": {
+          "type": "string",
+          "description": "Associated Order ID",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "receiptNumber": {
+          "type": "string",
+          "description": "Official receipt identifier",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "customerName": {
+          "type": "string",
+          "description": "Customer full name",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "phone": {
+          "type": "string",
+          "description": "Customer phone number",
+          "minLength": 6,
+          "maxLength": 40
+        },
+        "email": {
+          "type": "string",
+          "description": "Customer email address",
+          "maxLength": 160
+        },
+        "totalAmount": {
+          "type": "number",
+          "description": "Order total paid in INR"
+        },
+        "paymentMethod": {
+          "type": "string",
+          "description": "Selected payment method",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "transactionId": {
+          "type": "string",
+          "description": "Submitted UPI or Bank UTR reference",
+          "maxLength": 120
+        },
+        "itemsSummary": {
+          "type": "string",
+          "description": "Short ordered items summary",
+          "maxLength": 600
+        },
+        "alertStatus": {
+          "type": "string",
+          "description": "Admin alert review state",
+          "enum": [
+            "unread",
+            "acknowledged",
+            "verified"
+          ]
+        },
+        "customerNotified": {
+          "type": "boolean",
+          "description": "Whether confirmed order notification was dispatched to customer"
+        },
+        "emailSent": {
+          "type": "boolean",
+          "description": "Whether automated SMTP email receipt was sent"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp"
+        }
+      },
+      "required": [
+        "orderId",
+        "receiptNumber",
+        "customerName",
+        "phone",
+        "totalAmount",
+        "paymentMethod",
+        "alertStatus",
+        "customerNotified",
+        "emailSent",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": {
+        "$ref": "#/entities/Product"
+      },
+      "description": "Publicly readable live product catalog updated exclusively by verified store administrators."
+    },
+    "/mediaFolders/{folderId}": {
+      "schema": {
+        "$ref": "#/entities/MediaFolder"
+      },
+      "description": "Admin-only image library folders."
+    },
+    "/mediaFolders/{folderId}/images/{imageId}": {
+      "schema": {
+        "$ref": "#/entities/MediaFolderImage"
+      },
+      "description": "Admin-only uploaded or curated photos inside a specific folder."
+    },
+    "/orders/{orderId}": {
+      "schema": {
+        "$ref": "#/entities/Order"
+      },
+      "description": "Customer purchase orders; readable and modifiable strictly by store administrators."
+    },
+    "/adminNotes/{orderId}": {
+      "schema": {
+        "$ref": "#/entities/AdminNote"
+      },
+      "description": "Admin-only private order fulfillment notes."
+    },
+    "/admins/{userId}": {
+      "schema": {
+        "$ref": "#/entities/AdminUser"
+      },
+      "description": "Store administrator access control documents."
+    },
+    "/orderStatus/{orderId}": {
+      "schema": {
+        "$ref": "#/entities/OrderStatusPublic"
+      },
+      "description": "Non-PII live payment verification and tracking status readable by exact Order ID."
+    },
+    "/adminAlerts/{orderId}": {
+      "schema": {
+        "$ref": "#/entities/AdminAlert"
+      },
+      "description": "Admin-only real-time receipt alerts created atomically alongside checkout orders."
+    }
+  }
+}

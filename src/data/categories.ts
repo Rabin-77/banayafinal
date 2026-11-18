@@ -1,0 +1,67 @@
+import { Category } from '../types';
+
+export const CATEGORIES: Category[] = [
+  {
+    id: 'honey-sweeteners',
+    name: 'Honey & Natural Sweeteners',
+    slug: 'honey-sweeteners',
+    description: 'Raw mountain honey, pollen extracts & sun-cured floral preserves.',
+    image: '/images/malai-thean-1.webp',
+    itemCount: 4,
+    highlight: '100% Unpasteurized & Forest Harvested'
+  },
+  {
+    id: 'health-drinks',
+    name: 'Health Drinks & Malt',
+    slug: 'health-drinks',
+    description: 'Sprouted malt mixes, royal grain kanji & traditional wellness broths.',
+    image: '/images/abc-malt-2.png',
+    itemCount: 3,
+    highlight: 'No Refined Sugar & 100% Natural'
+  },
+  {
+    id: 'herbal-powders',
+    name: 'Herbal Leaf Powders',
+    slug: 'herbal-powders',
+    description: 'Farm-fresh shade-dried Curry Leaf & Moringa Leaf Powders rich in iron, calcium & antioxidants.',
+    image: '/images/murungai-leaf-powder-2.png',
+    itemCount: 2,
+    highlight: '100% Shade-Dried & Nutrient-Rich'
+  },
+  {
+    id: 'ghee-foods',
+    name: 'Ghee & Foods',
+    slug: 'ghee-foods',
+    description: 'Grass-fed A2 desi cow bilona ghee & traditional pantry essentials.',
+    image: '/images/desi-cow-ghee-2.png',
+    itemCount: 1,
+    highlight: 'Vedic Bilona Churned'
+  },
+  {
+    id: 'nuts-dryfruits',
+    name: 'Nuts & Dry Fruits',
+    slug: 'nuts-dryfruits',
+    description: 'Handpicked royal almonds, jumbo cashews, walnuts & antioxidant seeds.',
+    image: '/images/mixed-nuts-3.png',
+    itemCount: 1,
+    highlight: 'Grade-A Natural Crunch'
+  },
+  {
+    id: 'traditional-wellness',
+    name: 'Traditional Wellness',
+    slug: 'traditional-wellness',
+    description: 'Time-tested herbal tonics, honey-soaked amla & rejuvenation blends.',
+    image: '/images/honey-amla-3.png',
+    itemCount: 1,
+    highlight: 'Ancestral Immunity Recipes'
+  },
+  {
+    id: 'herbal-products',
+    name: 'Herbal Products',
+    slug: 'herbal-products',
+    description: 'Artisanal cold-process soaps, healing balms & daily herbal care.',
+    image: '/images/natural-soap-3.png',
+    itemCount: 1,
+    highlight: 'Chemical-Free Pure Care'
+  }
+];
