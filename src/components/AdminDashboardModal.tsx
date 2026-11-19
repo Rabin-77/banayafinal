@@ -91,6 +91,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
     deleteImageFromFolder,
     updateOrderStatus,
     deleteOrder,
+    clearAllOrdersAndCustomers,
     adminAlerts,
     unreadAlertsCount,
     smtpEmailConfigured,
@@ -142,10 +143,25 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
   const [orderDraftTracking, setOrderDraftTracking] = useState('');
   const [orderDraftNote, setOrderDraftNote] = useState('');
   const [confirmDeleteOrderId, setConfirmDeleteOrderId] = useState<string | null>(null);
+  const [confirmClearAllOrders, setConfirmClearAllOrders] = useState(false);
+  const [isClearingOrders, setIsClearingOrders] = useState(false);
   const [receiptOrder, setReceiptOrder] = useState<Order | null>(null);
 
   // Customers Tab State
   const [customerSearch, setCustomerSearch] = useState('');
+
+  const handleClearAllOrdersAndCustomers = async () => {
+    setIsClearingOrders(true);
+    try {
+      await clearAllOrdersAndCustomers();
+      setConfirmClearAllOrders(false);
+      setConfirmDeleteOrderId(null);
+      setEditingOrder(null);
+      setReceiptOrder(null);
+    } finally {
+      setIsClearingOrders(false);
+    }
+  };
 
   // File Input Refs
   const primaryUploadRef = useRef<HTMLInputElement | null>(null);
@@ -1712,29 +1728,68 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
                   )}
                 </div>
 
-                <div className="flex flex-col sm:flex-row gap-2.5">
-                  <div className="relative flex-1 max-w-sm">
-                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      value={orderSearch}
-                      onChange={(e) => setOrderSearch(e.target.value)}
-                      placeholder="Search orders, customer, phone..."
-                      className="w-full h-9 pl-9 pr-3 rounded-lg border border-slate-200 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-slate-400"
-                    />
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                  <div className="flex flex-col sm:flex-row gap-2.5 flex-1">
+                    <div className="relative flex-1 max-w-sm">
+                      <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        value={orderSearch}
+                        onChange={(e) => setOrderSearch(e.target.value)}
+                        placeholder="Search orders, customer, phone..."
+                        className="w-full h-9 pl-9 pr-3 rounded-lg border border-slate-200 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-slate-400"
+                      />
+                    </div>
+                    <select
+                      value={orderStatusFilter}
+                      onChange={(e) => setOrderStatusFilter(e.target.value)}
+                      className="h-9 px-3 rounded-lg border border-slate-200 text-sm text-slate-700 bg-white focus:outline-none focus:border-slate-400"
+                    >
+                      <option value="all">All Statuses</option>
+                      {ORDER_STATUSES.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
                   </div>
-                  <select
-                    value={orderStatusFilter}
-                    onChange={(e) => setOrderStatusFilter(e.target.value)}
-                    className="h-9 px-3 rounded-lg border border-slate-200 text-sm text-slate-700 bg-white focus:outline-none focus:border-slate-400"
-                  >
-                    <option value="all">All Statuses</option>
-                    {ORDER_STATUSES.map((s) => (
-                      <option key={s} value={s}>
-                        {s}
-                      </option>
-                    ))}
-                  </select>
+
+                  {orders.length > 0 && (
+                    <div className="flex items-center gap-2 shrink-0">
+                      {confirmClearAllOrders ? (
+                        <div className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1">
+                          <span className="text-xs font-medium text-red-800">
+                            Clear all {orders.length} order{orders.length > 1 ? 's' : ''}?
+                          </span>
+                          <button
+                            type="button"
+                            disabled={isClearingOrders}
+                            onClick={handleClearAllOrdersAndCustomers}
+                            className="px-2.5 py-1 rounded bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white text-xs font-medium cursor-pointer"
+                          >
+                            {isClearingOrders ? 'Clearing...' : 'Confirm Clear All'}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isClearingOrders}
+                            onClick={() => setConfirmClearAllOrders(false)}
+                            className="px-2 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50 text-xs text-slate-600 cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmClearAllOrders(true)}
+                          className="h-9 px-3 rounded-lg border border-red-200 bg-white hover:bg-red-50 text-red-700 text-xs font-medium inline-flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Clear Orders &amp; Customers</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
@@ -1879,7 +1934,9 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
                         {filteredOrders.length === 0 && (
                           <tr>
                             <td colSpan={7} className="py-10 text-center text-sm text-slate-500">
-                              No matching orders found.
+                              {orders.length === 0
+                                ? 'No orders yet. Validated customer orders placed from today will appear here automatically.'
+                                : 'No matching orders found.'}
                             </td>
                           </tr>
                         )}
@@ -1893,15 +1950,54 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
             {/* 5. CUSTOMERS TAB */}
             {activeTab === 'customers' && (
               <div className="space-y-4">
-                <div className="relative max-w-sm">
-                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    value={customerSearch}
-                    onChange={(e) => setCustomerSearch(e.target.value)}
-                    placeholder="Search customers by name, city, phone..."
-                    className="w-full h-9 pl-9 pr-3 rounded-lg border border-slate-200 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-slate-400"
-                  />
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                  <div className="relative flex-1 max-w-sm">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={customerSearch}
+                      onChange={(e) => setCustomerSearch(e.target.value)}
+                      placeholder="Search customers by name, city, phone..."
+                      className="w-full h-9 pl-9 pr-3 rounded-lg border border-slate-200 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-slate-400"
+                    />
+                  </div>
+
+                  {orders.length > 0 && (
+                    <div className="flex items-center gap-2 shrink-0">
+                      {confirmClearAllOrders ? (
+                        <div className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1">
+                          <span className="text-xs font-medium text-red-800">
+                            Clear all customer &amp; order records?
+                          </span>
+                          <button
+                            type="button"
+                            disabled={isClearingOrders}
+                            onClick={handleClearAllOrdersAndCustomers}
+                            className="px-2.5 py-1 rounded bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white text-xs font-medium cursor-pointer"
+                          >
+                            {isClearingOrders ? 'Clearing...' : 'Confirm Clear All'}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isClearingOrders}
+                            onClick={() => setConfirmClearAllOrders(false)}
+                            className="px-2 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50 text-xs text-slate-600 cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmClearAllOrders(true)}
+                          className="h-9 px-3 rounded-lg border border-red-200 bg-white hover:bg-red-50 text-red-700 text-xs font-medium inline-flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Clear Orders &amp; Customers</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
@@ -1955,7 +2051,9 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
                         {customers.length === 0 && (
                           <tr>
                             <td colSpan={6} className="py-10 text-center text-sm text-slate-500">
-                              No customer records yet.
+                              {orders.length === 0
+                                ? 'No customer records yet. Verified customers who place orders from today will appear here automatically.'
+                                : 'No matching customers found.'}
                             </td>
                           </tr>
                         )}

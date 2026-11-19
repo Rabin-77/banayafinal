@@ -19,6 +19,10 @@ export const AccountModal: React.FC = () => {
 
   if (activeModal !== 'account') return null;
 
+  const latestOrder = orders[0] || null;
+  const displayName = latestOrder?.customerName || 'Banaya Customer';
+  const avatarInitial = displayName.trim().charAt(0).toUpperCase() || 'B';
+
   return (
     <div
       onClick={() => setActiveModal(null)}
@@ -34,17 +38,17 @@ export const AccountModal: React.FC = () => {
         <div className="p-6 border-b border-slate-200 bg-white flex items-center justify-between">
           <div className="flex items-center gap-3.5">
             <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-600 to-emerald-800 text-white flex items-center justify-center font-heading font-extrabold text-xl shadow-xs">
-              A
+              {avatarInitial}
             </div>
             <div>
               <h2 className="font-heading text-xl sm:text-2xl font-bold text-slate-950">
-                Ananya Ramesh
+                {displayName}
               </h2>
               <div className="flex items-center gap-2 text-xs text-slate-500">
-                <span>Member since 2024</span>
+                <span>{orders.length > 0 ? `${orders.length} Verified ${orders.length === 1 ? 'Order' : 'Orders'}` : 'Guest Account'}</span>
                 <span>•</span>
                 <span className="text-amber-600 font-bold flex items-center gap-1">
-                  <Award className="w-3.5 h-3.5" /> Banayana Gold Club
+                  <Award className="w-3.5 h-3.5" /> Banaya Wellness Club
                 </span>
               </div>
             </div>
@@ -62,10 +66,10 @@ export const AccountModal: React.FC = () => {
         <div className="px-6 py-3.5 bg-emerald-50 border-b border-emerald-100 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-amber-500" />
-            <span className="text-xs text-slate-700">Your Banayana Wellness Coins:</span>
-            <strong className="text-sm text-emerald-800 font-bold">280 Coins (Worth ₹280)</strong>
+            <span className="text-xs text-slate-700">Special Offer Code:</span>
+            <strong className="text-sm text-emerald-800 font-bold font-mono">BANAYANA10</strong>
           </div>
-          <span className="text-[11px] text-amber-700 font-bold">Earn 5% back on all orders</span>
+          <span className="text-[11px] text-amber-700 font-bold">10% OFF + Free Shipping above ₹499</span>
         </div>
 
         {/* Tabs Bar */}
@@ -213,50 +217,53 @@ export const AccountModal: React.FC = () => {
           {/* Tab 2: Addresses */}
           {activeTab === 'addresses' && (
             <div className="space-y-4">
-              <div className="p-4 bg-white rounded-2xl border border-emerald-600 shadow-xs relative">
-                <span className="absolute top-4 right-4 text-[10px] font-bold bg-[#064E3B] text-white px-2 py-0.5 rounded">
-                  Default
-                </span>
-                <h4 className="font-bold text-sm text-slate-950 mb-1">Home Address</h4>
-                <p className="text-xs text-slate-600 leading-relaxed">
-                  Flat 4B, Lotus Apartments, 3rd Cross Street, Anna Nagar<br />
-                  Chennai, Tamil Nadu - 600040<br />
-                  Phone: +91 98401 23456
-                </p>
-              </div>
-
-              <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-2xs">
-                <h4 className="font-bold text-sm text-slate-950 mb-1">Office Address</h4>
-                <p className="text-xs text-slate-600 leading-relaxed">
-                  Banayana Enterprise Tech Park, Tower B, Level 4, Guindy Industrial Estate<br />
-                  Chennai, Tamil Nadu - 600032<br />
-                  Phone: +91 98401 23456
-                </p>
-              </div>
+              {latestOrder ? (
+                <div className="p-4 bg-white rounded-2xl border border-emerald-600 shadow-xs relative">
+                  <span className="absolute top-4 right-4 text-[10px] font-bold bg-[#064E3B] text-white px-2 py-0.5 rounded">
+                    Latest Delivery Address
+                  </span>
+                  <h4 className="font-bold text-sm text-slate-950 mb-1">{latestOrder.customerName}</h4>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    {latestOrder.shippingAddress}<br />
+                    {latestOrder.city} - {latestOrder.postalCode}<br />
+                    Phone: {latestOrder.phone}
+                  </p>
+                </div>
+              ) : (
+                <div className="p-6 bg-white rounded-2xl border border-slate-200 text-center text-xs sm:text-sm text-slate-500">
+                  No saved delivery address yet. Your shipping address will appear here automatically after placing an order.
+                </div>
+              )}
             </div>
           )}
 
           {/* Tab 3: Profile */}
           {activeTab === 'profile' && (
             <div className="bg-white p-5 rounded-2xl border border-slate-200 space-y-4 text-xs sm:text-sm shadow-2xs">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-slate-400 block mb-1">Full Name</label>
-                  <strong className="text-slate-950 block">Ananya Ramesh</strong>
+              {latestOrder ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-slate-400 block mb-1">Full Name</label>
+                    <strong className="text-slate-950 block">{latestOrder.customerName}</strong>
+                  </div>
+                  <div>
+                    <label className="text-slate-400 block mb-1">Email Address</label>
+                    <strong className="text-slate-950 block">{latestOrder.email || 'Not provided'}</strong>
+                  </div>
+                  <div>
+                    <label className="text-slate-400 block mb-1">Phone</label>
+                    <strong className="text-slate-950 block">{latestOrder.phone}</strong>
+                  </div>
+                  <div>
+                    <label className="text-slate-400 block mb-1">City</label>
+                    <strong className="text-slate-950 block">{latestOrder.city}</strong>
+                  </div>
                 </div>
-                <div>
-                  <label className="text-slate-400 block mb-1">Email Address</label>
-                  <strong className="text-slate-950 block">ananya.r@example.com</strong>
-                </div>
-                <div>
-                  <label className="text-slate-400 block mb-1">Phone</label>
-                  <strong className="text-slate-950 block">+91 98401 23456</strong>
-                </div>
-                <div>
-                  <label className="text-slate-400 block mb-1">Dietary Preferences</label>
-                  <span className="text-emerald-700 font-semibold block">100% Vegetarian & Natural Ayurvedic</span>
-                </div>
-              </div>
+              ) : (
+                <p className="text-slate-500 text-center py-4">
+                  Your customer profile details will appear here automatically once you complete an order.
+                </p>
+              )}
             </div>
           )}
         </div>

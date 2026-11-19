@@ -158,6 +158,7 @@ interface ShopContextType {
   // Order & Customer Management (Admin)
   updateOrderStatus: (orderId: string, status: Order['status'], trackingNumber?: string, adminNotes?: string) => void;
   deleteOrder: (orderId: string) => void;
+  clearAllOrdersAndCustomers: () => Promise<void>;
   adminNotes?: Record<string, string>;
   setAdminNotesForOrder: (orderId: string, note: string) => void;
   adminAlerts: AdminAlertRecord[];
@@ -266,77 +267,20 @@ function buildProductFirestoreFields(product: Product, uid: string) {
   };
 }
 
-function buildInitialSampleOrders(): Order[] {
-  const byId = (id: string, fallbackIdx: number) =>
-    PRODUCTS.find((p) => p.id === id) || PRODUCTS[fallbackIdx] || PRODUCTS[0];
+const LEGACY_SAMPLE_ORDER_IDS = new Set(['STM-84920', 'STM-85104', 'STM-85219']);
 
-  if (PRODUCTS.length === 0) return [];
+function stripLegacySampleOrdersList(list: Order[]): Order[] {
+  return list.filter((o) => o && !LEGACY_SAMPLE_ORDER_IDS.has(o.id));
+}
 
-  return [
-    {
-      id: 'STM-84920',
-      date: '2026-11-10',
-      items: [
-        { product: byId('malai-thean', 2), quantity: 1, selectedWeight: '500g' },
-        { product: byId('abc-malt', 12), quantity: 2, selectedWeight: '100g' }
-      ],
-      subtotal: 1700,
-      discount: 170,
-      shipping: 0,
-      totalAmount: 1530,
-      status: 'Delivered',
-      customerName: 'Ananya Ramesh',
-      phone: '+91 98401 23456',
-      email: 'ananya.r@example.com',
-      shippingAddress: '42, Lotus Lake Road, Anna Nagar',
-      city: 'Chennai',
-      postalCode: '600040',
-      paymentMethod: 'UPI / Google Pay (UTR: 329048120)',
-      trackingNumber: 'IND98427190IN'
-    },
-    {
-      id: 'STM-85104',
-      date: '2026-11-11',
-      items: [
-        { product: byId('pure-honey', 0), quantity: 2, selectedWeight: '500g' },
-        { product: byId('gulkand', 5), quantity: 1, selectedWeight: '250g' }
-      ],
-      subtotal: 750,
-      discount: 0,
-      shipping: 0,
-      totalAmount: 750,
-      status: 'Processing',
-      customerName: 'Dr. Senthil Kumar',
-      phone: '+91 94432 87654',
-      email: 'dr.senthil@apollo.org',
-      shippingAddress: '15/B, Vaigai Avenue, K.K. Nagar',
-      city: 'Madurai',
-      postalCode: '625020',
-      paymentMethod: 'Google Pay (Instant Verification)',
-      trackingNumber: 'STM8831920IN'
-    },
-    {
-      id: 'STM-85219',
-      date: '2026-11-11',
-      items: [
-        { product: byId('mudavatukal-soup', 7), quantity: 3, selectedWeight: '100g' },
-        { product: byId('karuppukavani-kanji', 6), quantity: 2, selectedWeight: '250g' }
-      ],
-      subtotal: 1240,
-      discount: 100,
-      shipping: 0,
-      totalAmount: 1140,
-      status: 'Shipped',
-      customerName: 'Meenakshi Sundaram',
-      phone: '+91 97890 11223',
-      email: 'meenakshi.s@gmail.com',
-      shippingAddress: '78, Cross Cut Road, Gandhipuram',
-      city: 'Coimbatore',
-      postalCode: '641012',
-      paymentMethod: 'UPI / PhonePe',
-      trackingNumber: 'IND7723910IN'
+function stripLegacySampleAdminNotes(notes: Record<string, string>): Record<string, string> {
+  const cleaned: Record<string, string> = {};
+  for (const [key, val] of Object.entries(notes)) {
+    if (!LEGACY_SAMPLE_ORDER_IDS.has(key)) {
+      cleaned[key] = val;
     }
-  ];
+  }
+  return cleaned;
 }
 
 export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -359,7 +303,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const [activeModal, setActiveModal] = useState<ActiveModal>(null);
   const [selectedProductState, setSelectedProductState] = useState<Product | null>(null);
-  const [trackingLookupId, setTrackingLookupId] = useState<string>('STM-84920');
+  const [trackingLookupId, setTrackingLookupId] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [sortBy, setSortBy] = useState<string>('featured');
@@ -408,31 +352,36 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   });
 
-  // Orders State
+  // Orders State (real validated customer orders only — no pre-seeded demo records)
   const [orders, setOrders] = useState<Order[]>(() => {
     try {
       const saved = localStorage.getItem('startone_orders');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return stripLegacySampleOrdersList(parsed as Order[]);
+        }
+      }
     } catch {
       // ignore
     }
-    return buildInitialSampleOrders();
+    return [];
   });
 
   // Admin notes State
   const [adminNotes, setAdminNotes] = useState<Record<string, string>>(() => {
     try {
       const saved = localStorage.getItem('banaya_admin_notes');
-      return saved
-        ? JSON.parse(saved)
-        : {
-            'STM-84920': 'Delivered via DTDC Courier. Customer praised Honey aroma.',
-            'STM-85104': 'Customer requested fresh batch honey jar. Verified via WhatsApp.',
-            'STM-85219': 'Joint pain soup ordered for elderly parents. Shipped priority.'
-          };
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') {
+          return stripLegacySampleAdminNotes(parsed as Record<string, string>);
+        }
+      }
     } catch {
-      return {};
+      // ignore
     }
+    return {};
   });
 
   // Media Folders State
@@ -1080,74 +1029,16 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       handleFirestoreError(error, OperationType.WRITE, 'mediaFolders');
     }
 
+    // Purge any legacy pre-launch demo orders from Firestore so only real customer orders remain
     try {
-      const ordersSnap = await getDocs(collection(db, 'orders'));
-      if (ordersSnap.empty) {
-        const sampleOrders = buildInitialSampleOrders();
-        const orderBatch = writeBatch(db);
-        for (const ord of sampleOrders) {
-          const cleanOrderId = sanitizeFirestoreId(ord.id, 'ord');
-          const mappedStatus = ord.status === 'Delivered' || ord.status === 'Shipped' ? 'Confirmed' : ord.status;
-          orderBatch.set(doc(db, 'orders', cleanOrderId), {
-            id: cleanOrderId,
-            receiptNumber: formatReceiptNumber(cleanOrderId),
-            date: ord.date,
-            items: ord.items.map((it) => ({
-              quantity: it.quantity,
-              selectedWeight: it.selectedWeight,
-              product: {
-                id: it.product.id,
-                name: it.product.name,
-                price: it.product.price,
-                image: it.product.image
-              }
-            })),
-            subtotal: ord.subtotal,
-            discount: ord.discount,
-            shipping: ord.shipping,
-            totalAmount: ord.totalAmount,
-            status: mappedStatus,
-            customerName: ord.customerName,
-            phone: ord.phone,
-            email: ord.email || '',
-            shippingAddress: ord.shippingAddress,
-            city: ord.city,
-            postalCode: ord.postalCode,
-            paymentMethod: ord.paymentMethod,
-            trackingNumber: ord.trackingNumber || '',
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp()
-          });
-          orderBatch.set(doc(db, 'orderStatus', cleanOrderId), {
-            orderId: cleanOrderId,
-            receiptNumber: formatReceiptNumber(cleanOrderId),
-            status: mappedStatus,
-            paymentVerified: mappedStatus !== 'Processing',
-            trackingNumber: ord.trackingNumber || '',
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp()
-          });
-          orderBatch.set(doc(db, 'adminAlerts', cleanOrderId), {
-            orderId: cleanOrderId,
-            receiptNumber: formatReceiptNumber(cleanOrderId),
-            customerName: ord.customerName,
-            phone: ord.phone,
-            email: ord.email || '',
-            totalAmount: ord.totalAmount,
-            paymentMethod: ord.paymentMethod,
-            transactionId: ord.transactionId || '',
-            itemsSummary: ord.items.map((it) => `${it.product.name} (${it.selectedWeight}) x${it.quantity}`).join(', ').slice(0, 600),
-            alertStatus: mappedStatus === 'Processing' ? 'unread' : 'verified',
-            customerNotified: mappedStatus !== 'Processing',
-            emailSent: false,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp()
-          });
-        }
-        await orderBatch.commit();
+      for (const sampleId of LEGACY_SAMPLE_ORDER_IDS) {
+        void deleteDoc(doc(db, 'orders', sampleId)).catch(() => {});
+        void deleteDoc(doc(db, 'orderStatus', sampleId)).catch(() => {});
+        void deleteDoc(doc(db, 'adminAlerts', sampleId)).catch(() => {});
+        void deleteDoc(doc(db, 'adminNotes', sampleId)).catch(() => {});
       }
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'orders');
+    } catch {
+      // ignore if sample docs never existed
     }
   }, []);
 
@@ -1283,12 +1174,10 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const unsubOrders = onSnapshot(
       collection(db, 'orders'),
       (snap) => {
-        if (!snap.empty) {
-          const liveOrders = snap.docs
-            .map((docSnap) => docSnap.data() as Order)
-            .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-          setOrders(liveOrders);
-        }
+        const liveOrders = stripLegacySampleOrdersList(
+          snap.docs.map((docSnap) => docSnap.data() as Order)
+        ).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+        setOrders(liveOrders);
       },
       (error) => {
         handleFirestoreError(error, OperationType.LIST, 'orders');
@@ -1301,7 +1190,10 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const notesObj: Record<string, string> = {};
         snap.docs.forEach((d) => {
           const data = d.data() as { orderId?: string; note?: string };
-          notesObj[data.orderId || d.id] = data.note || '';
+          const key = data.orderId || d.id;
+          if (!LEGACY_SAMPLE_ORDER_IDS.has(key)) {
+            notesObj[key] = data.note || '';
+          }
         });
         setAdminNotes(notesObj);
       },
@@ -1407,10 +1299,10 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         ) => {
           if (cancelled || !data) return;
           if (Array.isArray(data.orders)) {
-            setOrders(data.orders);
+            setOrders(stripLegacySampleOrdersList(data.orders));
           }
           if (data.adminNotes && typeof data.adminNotes === 'object') {
-            setAdminNotes(data.adminNotes);
+            setAdminNotes(stripLegacySampleAdminNotes(data.adminNotes));
           }
           if (Array.isArray(data.mediaFolders)) {
             setMediaFolders(data.mediaFolders);
@@ -2614,6 +2506,63 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     showToast('Order Removed', `Order ${orderId} deleted from records.`, 'info');
   };
 
+  const clearAllOrdersAndCustomers = async (): Promise<void> => {
+    const passkey = getAdminSessionPasskey();
+    const orderIdsToDelete = Array.from(
+      new Set([
+        ...orders.map((o) => sanitizeFirestoreId(o.id, 'ord')),
+        ...adminAlerts.map((a) => sanitizeFirestoreId(a.orderId, 'ord'))
+      ])
+    );
+
+    setOrders([]);
+    setAdminAlerts([]);
+    setAdminNotes({});
+    try {
+      localStorage.setItem('startone_orders', JSON.stringify([]));
+      localStorage.setItem('banaya_admin_notes', JSON.stringify({}));
+    } catch {
+      // ignore
+    }
+
+    if (isCloudAdmin) {
+      try {
+        const [ordersSnap, alertsSnap, notesSnap] = await Promise.all([
+          getDocs(collection(db, 'orders')),
+          getDocs(collection(db, 'adminAlerts')),
+          getDocs(collection(db, 'adminNotes'))
+        ]);
+
+        const allRefs = [...ordersSnap.docs.map((d) => d.ref), ...alertsSnap.docs.map((d) => d.ref), ...notesSnap.docs.map((d) => d.ref)];
+        for (let i = 0; i < allRefs.length; i += 400) {
+          const batch = writeBatch(db);
+          allRefs.slice(i, i + 400).forEach((ref) => batch.delete(ref));
+          await batch.commit();
+        }
+
+        const statusIds = new Set([...orderIdsToDelete, ...ordersSnap.docs.map((d) => d.id)]);
+        for (const oid of statusIds) {
+          void deleteDoc(doc(db, 'orderStatus', oid)).catch(() => {});
+        }
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, 'orders');
+      }
+    }
+
+    if (passkey) {
+      void fetch('/api/orders', {
+        method: 'DELETE',
+        headers: { 'x-admin-passkey': passkey }
+      }).catch(() => {});
+    }
+
+    showToast(
+      'Orders & Customers Cleared',
+      'All previous orders and customer records removed. Real customer orders will appear here from today.',
+      'success'
+    );
+  };
+
   const setAdminNotesForOrder = (orderId: string, note: string) => {
     const cleanOrderId = sanitizeFirestoreId(orderId, 'ord');
     const passkey = getAdminSessionPasskey();
@@ -2722,6 +2671,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         deleteImageFromFolder,
         updateOrderStatus,
         deleteOrder,
+        clearAllOrdersAndCustomers,
         adminNotes,
         setAdminNotesForOrder,
         adminAlerts,

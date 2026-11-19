@@ -314,77 +314,20 @@ function loadDefaultProducts(): StoredProduct[] {
   return [];
 }
 
-function createInitialOrders(products: StoredProduct[]): StoredOrder[] {
-  const byId = (id: string, fallbackIdx: number) =>
-    products.find((p) => p.id === id) || products[fallbackIdx] || products[0];
+const LEGACY_SAMPLE_ORDER_IDS = new Set(['STM-84920', 'STM-85104', 'STM-85219']);
 
-  if (products.length === 0) return [];
+function stripLegacySampleOrders(orders: StoredOrder[]): StoredOrder[] {
+  return orders.filter((o) => o && !LEGACY_SAMPLE_ORDER_IDS.has(o.id));
+}
 
-  return [
-    {
-      id: 'STM-84920',
-      date: '2026-11-10',
-      items: [
-        { product: byId('malai-thean', 2), quantity: 1, selectedWeight: '500g' },
-        { product: byId('abc-malt', 6), quantity: 2, selectedWeight: '100g' }
-      ],
-      subtotal: 1700,
-      discount: 170,
-      shipping: 0,
-      totalAmount: 1530,
-      status: 'Delivered',
-      customerName: 'Ananya Ramesh',
-      phone: '+91 98401 23456',
-      email: 'ananya.r@example.com',
-      shippingAddress: '42, Lotus Lake Road, Anna Nagar',
-      city: 'Chennai',
-      postalCode: '600040',
-      paymentMethod: 'UPI / Google Pay (UTR: 329048120)',
-      trackingNumber: 'IND98427190IN'
-    },
-    {
-      id: 'STM-85104',
-      date: '2026-11-11',
-      items: [
-        { product: byId('pure-honey', 0), quantity: 2, selectedWeight: '500g' },
-        { product: byId('gulkand', 3), quantity: 1, selectedWeight: '250g' }
-      ],
-      subtotal: 750,
-      discount: 0,
-      shipping: 0,
-      totalAmount: 750,
-      status: 'Processing',
-      customerName: 'Dr. Senthil Kumar',
-      phone: '+91 94432 87654',
-      email: 'dr.senthil@apollo.org',
-      shippingAddress: '15/B, Vaigai Avenue, K.K. Nagar',
-      city: 'Madurai',
-      postalCode: '625020',
-      paymentMethod: 'Google Pay (Instant Verification)',
-      trackingNumber: 'STM8831920IN'
-    },
-    {
-      id: 'STM-85219',
-      date: '2026-11-11',
-      items: [
-        { product: byId('mudavatukal-soup', 9), quantity: 3, selectedWeight: '100g' },
-        { product: byId('karuppukavani-kanji', 10), quantity: 2, selectedWeight: '250g' }
-      ],
-      subtotal: 1240,
-      discount: 100,
-      shipping: 0,
-      totalAmount: 1140,
-      status: 'Shipped',
-      customerName: 'Meenakshi Sundaram',
-      phone: '+91 97890 11223',
-      email: 'meenakshi.s@gmail.com',
-      shippingAddress: '78, Cross Cut Road, Gandhipuram',
-      city: 'Coimbatore',
-      postalCode: '641012',
-      paymentMethod: 'UPI / PhonePe',
-      trackingNumber: 'IND7723910IN'
+function stripLegacySampleNotes(notes: Record<string, string>): Record<string, string> {
+  const cleaned: Record<string, string> = {};
+  for (const [k, v] of Object.entries(notes)) {
+    if (!LEGACY_SAMPLE_ORDER_IDS.has(k)) {
+      cleaned[k] = v;
     }
-  ];
+  }
+  return cleaned;
 }
 
 function uploadUrlExistsOnDisk(url?: string): boolean {
@@ -440,8 +383,8 @@ function loadInitialStore(): StoreState {
           products: Array.isArray(parsed.products) && parsed.products.length > 0
             ? sortCatalogByCanonicalOrder(parsed.products)
             : sortCatalogByCanonicalOrder(defaultProducts),
-          orders: Array.isArray(parsed.orders) ? parsed.orders : createInitialOrders(defaultProducts),
-          adminNotes: parsed.adminNotes && typeof parsed.adminNotes === 'object' ? parsed.adminNotes : {},
+          orders: Array.isArray(parsed.orders) ? stripLegacySampleOrders(parsed.orders) : [],
+          adminNotes: parsed.adminNotes && typeof parsed.adminNotes === 'object' ? stripLegacySampleNotes(parsed.adminNotes) : {},
           mediaFolders: Array.isArray(parsed.mediaFolders)
             ? parsed.mediaFolders
             : JSON.parse(JSON.stringify(DEFAULT_MEDIA_FOLDERS)) as MediaFolder[],
@@ -456,12 +399,8 @@ function loadInitialStore(): StoreState {
 
   return sanitizeLoadedStoreState({
     products: sortCatalogByCanonicalOrder(defaultProducts),
-    orders: createInitialOrders(defaultProducts),
-    adminNotes: {
-      'STM-84920': 'Delivered via DTDC Courier. Customer praised Honey aroma.',
-      'STM-85104': 'Customer requested fresh batch honey jar. Verified via WhatsApp.',
-      'STM-85219': 'Joint pain soup ordered for elderly parents. Shipped priority.'
-    },
+    orders: [],
+    adminNotes: {},
     mediaFolders: JSON.parse(JSON.stringify(DEFAULT_MEDIA_FOLDERS)) as MediaFolder[],
     receiptLogs: [],
     updatedAt: Date.now()
@@ -1076,6 +1015,22 @@ async function startServer(): Promise<void> {
     } catch (err) {
       console.error('Order update error:', err);
       res.status(500).json({ error: 'Failed to update order' });
+    }
+  });
+
+  // Clear all orders, notes & receipt logs (Admin)
+  app.delete('/api/orders', requireAdmin, (_req: Request, res: Response) => {
+    try {
+      storeState.orders = [];
+      storeState.adminNotes = {};
+      storeState.receiptLogs = [];
+      persistStore(false);
+      broadcastStoreUpdate('orders-cleared');
+
+      res.json({ orders: [], adminNotes: {}, updatedAt: storeState.updatedAt });
+    } catch (err) {
+      console.error('Clear orders error:', err);
+      res.status(500).json({ error: 'Failed to clear orders' });
     }
   });
 
