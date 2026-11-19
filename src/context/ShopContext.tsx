@@ -114,7 +114,7 @@ interface ShopContextType {
     paymentMethod: string;
     transactionId?: string;
     bankRef?: string;
-  }) => Order;
+  }) => Promise<Order>;
   trackOrderById: (orderId: string) => Order | null;
 
   // Toast
@@ -1289,7 +1289,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const cartTotal = Math.max(0, cartSubtotal - cartDiscount + cartShipping);
   const freeShippingRemaining = Math.max(0, freeShippingThreshold - cartSubtotal);
 
-  const placeOrder = (details: {
+  const placeOrder = async (details: {
     customerName: string;
     phone: string;
     email: string;
@@ -1299,7 +1299,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     paymentMethod: string;
     transactionId?: string;
     bankRef?: string;
-  }): Order => {
+  }): Promise<Order> => {
     const orderNumber = Math.floor(10000 + Math.random() * 90000);
     const trackingCode = `BNY${Math.floor(10000000 + Math.random() * 90000000)}IN`;
     const submittedTxnId = clampString((details.transactionId || details.bankRef || '').trim(), 120);
@@ -1327,15 +1327,11 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       shippingAddress: clampString(details.shippingAddress, 400) || 'Address Provided',
       city: clampString(details.city, 100) || 'Tamil Nadu',
       postalCode: clampString(details.postalCode, 20) || '600001',
-      paymentMethod: clampString(details.paymentMethod, 160) || 'UPI Payment',
+      paymentMethod: clampString(details.paymentMethod, 160) || 'Razorpay',
       trackingNumber: trackingCode,
       transactionId: submittedTxnId,
       bankRef: submittedBankRef
     };
-
-    setOrders((prev) => [newOrder, ...prev]);
-    clearCart();
-    setAppliedCoupon(null);
 
     // Push order, non-PII live tracker, and admin alert receipt atomically to Firestore
     const firestoreOrderPayload = {
@@ -1403,9 +1399,15 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     batch.set(doc(db, 'orderStatus', cleanId), publicStatusPayload);
     batch.set(doc(db, 'adminAlerts', cleanId), adminAlertPayload);
 
-    void batch.commit().catch((err) => {
-      console.warn('Firestore order batch sync note:', err);
-    });
+    try {
+      await batch.commit();
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `orders/${cleanId}`);
+    }
+
+    setOrders((prev) => [newOrder, ...prev]);
+    clearCart();
+    setAppliedCoupon(null);
 
     // Dispatch automatic backend receipt alert (records server receipt log + auto-emails if SMTP configured)
     void fetch('/api/notifications/order-receipt', {

@@ -1260,10 +1260,13 @@ async function startServer(): Promise<void> {
 
   app.get('/api/payments/config', (_req: Request, res: Response) => {
     const creds = getRazorpayCredentials();
+    const isTestMode = Boolean(creds && creds.keyId.startsWith('rzp_test_'));
+    const mode = !creds ? 'unconfigured' : isTestMode ? 'test' : 'live';
     res.json({
       razorpayEnabled: Boolean(creds),
       keyId: creds ? creds.keyId : null,
-      mode: creds ? 'razorpay' : 'direct'
+      isTestMode,
+      mode
     });
   });
 
@@ -1271,7 +1274,7 @@ async function startServer(): Promise<void> {
     try {
       const creds = getRazorpayCredentials();
       if (!creds) {
-        res.status(503).json({ error: 'Signed payment gateway keys not configured' });
+        res.status(503).json({ error: 'Razorpay API keys are not configured on the server' });
         return;
       }
 
@@ -1283,8 +1286,9 @@ async function startServer(): Promise<void> {
         email?: string;
       };
 
-      const parsedAmount = Math.round(Number(amountInr) || 0);
-      if (parsedAmount < 1 || parsedAmount > 1_000_000) {
+      const numericAmount = Number(amountInr);
+      const amountPaise = Number.isFinite(numericAmount) ? Math.round(numericAmount * 100) : 0;
+      if (amountPaise < 100 || amountPaise > 100_000_000) {
         res.status(400).json({ error: 'Invalid payment amount' });
         return;
       }
@@ -1297,7 +1301,7 @@ async function startServer(): Promise<void> {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          amount: parsedAmount * 100,
+          amount: amountPaise,
           currency: 'INR',
           receipt: String(receipt || `BNY-${Date.now()}`).slice(0, 40),
           notes: {
@@ -1318,7 +1322,7 @@ async function startServer(): Promise<void> {
 
       if (!rzpRes.ok || !rzpData.id) {
         res.status(502).json({
-          error: rzpData.error?.description || 'Failed to initialize payment gateway order'
+          error: rzpData.error?.description || 'Failed to initialize Razorpay payment order'
         });
         return;
       }
@@ -1327,7 +1331,8 @@ async function startServer(): Promise<void> {
         orderId: rzpData.id,
         amount: rzpData.amount,
         currency: rzpData.currency || 'INR',
-        keyId: creds.keyId
+        keyId: creds.keyId,
+        isTestMode: creds.keyId.startsWith('rzp_test_')
       });
     } catch (err) {
       console.error('Razorpay create-order error:', err);

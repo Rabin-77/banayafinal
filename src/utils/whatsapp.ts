@@ -18,24 +18,24 @@ export function formatOrderWhatsAppMessage(order: Order, transactionId?: string)
     .join('\n');
 
   const txnRef = (transactionId || order.transactionId || order.bankRef || '').trim();
-  const isVerified = order.status !== 'Processing';
+  const isRazorpayOrder = order.paymentMethod.includes('Razorpay') || Boolean(order.bankRef?.startsWith('order_'));
+  const isVerified = order.status !== 'Processing' || isRazorpayOrder;
   const paymentHeader = isVerified
     ? '✅ *PAYMENT VERIFIED & ORDER CONFIRMED*'
     : '⏳ *PAYMENT STATUS: VERIFICATION PENDING*';
   const orderStatusLabel = isVerified
-    ? `${order.status} (Payment Verified)`
+    ? `${order.status === 'Processing' ? 'Confirmed' : order.status} (Payment Verified)`
     : 'Processing (Awaiting Merchant Payment Verification)';
   const actionFooter = isVerified
     ? '🚚 *Action Required:* Payment is verified. Please pack and dispatch this order. Thank you!'
-    : `🔎 *Action Required:* Customer submitted ${order.paymentMethod}${txnRef ? ` (Ref: ${txnRef})` : ''}. Please verify receipt of ₹${order.totalAmount} to Banaya Enterprise (${BANAYA_UPI_ID}) and confirm dispatch.`;
+    : `🔎 *Action Required:* Customer submitted ${order.paymentMethod}${txnRef ? ` (Ref: ${txnRef})` : ''}. Please verify receipt of ₹${order.totalAmount} to Banaya Enterprise and confirm dispatch.`;
 
   return `🌿 *NEW ONLINE ORDER - BANAYA ENTERPRISE* 🌿
 ----------------------------------------
 ${paymentHeader}
 • *Payment Method:* ${order.paymentMethod}
 • *Payable Amount:* *₹${order.totalAmount}*
-• *Merchant UPI ID:* ${BANAYA_UPI_ID}
-${txnRef ? `• *Submitted Transaction / UTR ID:* ${txnRef}\n` : ''}
+${isRazorpayOrder && order.bankRef ? `• *Razorpay Order ID:* ${order.bankRef}\n` : ''}${txnRef ? `• *Payment / Transaction ID:* ${txnRef}\n` : ''}
 📋 *ORDER DETAILS:*
 • *Order ID:* ${order.id}
 • *Date:* ${order.date}

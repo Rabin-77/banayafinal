@@ -21,6 +21,21 @@ function sanitizeEnvSecret(raw?: string): string {
   return trimmed;
 }
 
+async function readJsonBody(req: VercelRequest): Promise<Record<string, unknown>> {
+  if (req.body && typeof req.body === 'object') {
+    return req.body as Record<string, unknown>;
+  }
+  if (typeof req.body === 'string' && req.body.trim()) {
+    return JSON.parse(req.body) as Record<string, unknown>;
+  }
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+  }
+  const raw = Buffer.concat(chunks).toString('utf8').trim();
+  return raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });
@@ -31,11 +46,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const keyId = sanitizeEnvSecret(process.env.RAZORPAY_KEY_ID);
     const keySecret = sanitizeEnvSecret(process.env.RAZORPAY_KEY_SECRET);
     if (!keyId || !keySecret || keyId === 'MY_RAZORPAY_KEY_ID') {
-      res.status(503).json({ error: 'Signed payment gateway keys not configured' });
+      res.status(503).json({ error: 'Razorpay API keys are not configured on the server' });
       return;
     }
 
-    const rawBody = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
+    const rawBody = await readJsonBody(req);
     const { amountInr, receipt, customerName, phone, email } = rawBody as {
       amountInr?: number;
       receipt?: string;
@@ -44,8 +59,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       email?: string;
     };
 
-    const parsedAmount = Math.round(Number(amountInr) || 0);
-    if (parsedAmount < 1 || parsedAmount > 1_000_000) {
+    const numericAmount = Number(amountInr);
+    const amountPaise = Number.isFinite(numericAmount) ? Math.round(numericAmount * 100) : 0;
+    if (amountPaise < 100 || amountPaise > 100_000_000) {
       res.status(400).json({ error: 'Invalid payment amount' });
       return;
     }
@@ -58,7 +74,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        amount: parsedAmount * 100,
+        amount: amountPaise,
         currency: 'INR',
         receipt: String(receipt || `BNY-${Date.now()}`).slice(0, 40),
         notes: {
@@ -79,7 +95,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (!rzpRes.ok || !rzpData.id) {
       res.status(502).json({
-        error: rzpData.error?.description || 'Failed to initialize payment gateway order'
+        error: rzpData.error?.description || 'Failed to initialize Razorpay payment order'
       });
       return;
     }
@@ -88,7 +104,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       orderId: rzpData.id,
       amount: rzpData.amount,
       currency: rzpData.currency || 'INR',
-      keyId
+      keyId,
+      isTestMode: keyId.startsWith('rzp_test_')
     });
   } catch (err) {
     console.error('Razorpay create-order error:', err);

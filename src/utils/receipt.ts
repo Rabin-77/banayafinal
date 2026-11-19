@@ -95,8 +95,8 @@ export function buildOrderReceiptHtml(order: Order, verifiedOverride?: boolean):
             <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#64748b;margin-bottom:6px;">Payment &amp; Tracking Reference</div>
             <div style="color:#334155;margin-bottom:3px;"><strong>Order ID:</strong> <span style="font-family:monospace;">${escapeHtml(order.id)}</span></div>
             <div style="color:#334155;margin-bottom:3px;"><strong>Payment Method:</strong> ${escapeHtml(order.paymentMethod)}</div>
-            <div style="color:#334155;margin-bottom:3px;"><strong>Txn / UTR Ref:</strong> <span style="font-family:monospace;">${escapeHtml(txnRef)}</span></div>
-            <div style="color:#334155;margin-bottom:3px;"><strong>Merchant VPA:</strong> <span style="font-family:monospace;">${escapeHtml(BANAYA_UPI_ID)}</span></div>
+            <div style="color:#334155;margin-bottom:3px;"><strong>Payment / Txn Ref:</strong> <span style="font-family:monospace;">${escapeHtml(txnRef)}</span></div>
+            <div style="color:#334155;margin-bottom:3px;"><strong>${order.bankRef?.startsWith('order_') || order.paymentMethod.includes('Razorpay') ? 'Gateway Order Ref' : 'Merchant VPA'}:</strong> <span style="font-family:monospace;">${escapeHtml(order.bankRef?.startsWith('order_') || order.paymentMethod.includes('Razorpay') ? order.bankRef || 'Razorpay' : BANAYA_UPI_ID)}</span></div>
             <div style="color:#334155;"><strong>Tracking No:</strong> <span style="font-family:monospace;">${escapeHtml(order.trackingNumber)}</span></div>
           </td>
         </tr>

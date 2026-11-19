@@ -1,33 +1,29 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   X,
   CheckCircle2,
   ShieldCheck,
   Smartphone,
   ArrowRight,
-  ArrowLeft,
   MessageCircle,
   Copy,
   Check,
   Lock,
-  Clock,
   BadgeCheck,
   Building2,
   MapPin,
   Printer,
   Truck,
-  ExternalLink,
   Loader2,
-  Landmark,
   Download,
   FileText,
   BellRing,
   Mail,
   ChevronDown,
   ChevronUp,
-  Split,
   Info,
-  QrCode
+  AlertTriangle,
+  RotateCcw
 } from 'lucide-react';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -36,10 +32,9 @@ import { Order } from '../types';
 import {
   getOrderWhatsAppUrl,
   openWhatsAppUrl,
-  DISPLAY_PHONE_NUMBER,
-  BANAYA_UPI_ID
+  DISPLAY_PHONE_NUMBER
 } from '../utils/whatsapp';
-import { BANAYA_CONTACT_EMAIL, BANAYA_BANK_DETAILS } from '../config/storeContact';
+import { BANAYA_CONTACT_EMAIL } from '../config/storeContact';
 import { getPriceForProductWeight } from '../utils/pricing';
 import {
   downloadOrderReceipt,
@@ -49,8 +44,13 @@ import {
 import { handleProductImageError, handleProductImageLoad } from '../utils/imageFallback';
 
 type PaymentOptionId = 'netbanking' | 'gpay' | 'phonepe' | 'paytm' | 'upi';
-
-const BANAYA_UPI_QR_IMAGE = '/assets/aistudio/image_07be354a.png';
+type PaymentLifecycleStatus =
+  | 'idle'
+  | 'creating_order'
+  | 'checkout_open'
+  | 'verifying'
+  | 'failed'
+  | 'verified';
 
 interface PaymentOptionConfig {
   id: PaymentOptionId;
@@ -65,7 +65,6 @@ interface BankConfig {
   shortName: string;
   code: string;
   accentClass: string;
-  portalUrl: string;
   popular: boolean;
 }
 
@@ -73,28 +72,28 @@ const PAYMENT_OPTIONS: PaymentOptionConfig[] = [
   {
     id: 'gpay',
     label: 'Google Pay',
-    subtitle: 'Pay using Google Pay'
+    subtitle: 'Pay via Google Pay in Razorpay Checkout'
   },
   {
     id: 'phonepe',
     label: 'PhonePe',
-    subtitle: 'Pay using PhonePe'
+    subtitle: 'Pay via PhonePe in Razorpay Checkout'
   },
   {
     id: 'paytm',
     label: 'Paytm',
-    subtitle: 'Pay using Paytm'
+    subtitle: 'Pay via Paytm in Razorpay Checkout'
   },
   {
     id: 'upi',
     label: 'UPI Payment',
-    subtitle: 'Instant pay via WhatsApp Pay or any UPI app',
+    subtitle: 'Instant pay via any UPI app or UPI ID in Razorpay Checkout',
     tag: 'Recommended'
   },
   {
     id: 'netbanking',
     label: 'Net Banking',
-    subtitle: 'All Indian banks supported — direct bank portal login',
+    subtitle: 'All major Indian banks supported via Razorpay NetBanking',
     tag: 'Up to ₹10L'
   }
 ];
@@ -106,7 +105,6 @@ const INDIAN_BANKS: BankConfig[] = [
     shortName: 'SBI',
     code: 'SBI',
     accentClass: 'bg-blue-700 text-white',
-    portalUrl: 'https://retail.onlinesbi.sbi/retail/login.htm',
     popular: true
   },
   {
@@ -115,7 +113,6 @@ const INDIAN_BANKS: BankConfig[] = [
     shortName: 'HDFC',
     code: 'HDFC',
     accentClass: 'bg-indigo-800 text-white',
-    portalUrl: 'https://netbanking.hdfcbank.com/netbanking/',
     popular: true
   },
   {
@@ -124,7 +121,6 @@ const INDIAN_BANKS: BankConfig[] = [
     shortName: 'ICICI',
     code: 'ICICI',
     accentClass: 'bg-orange-700 text-white',
-    portalUrl: 'https://www.icicibank.com/internet-banking',
     popular: true
   },
   {
@@ -133,7 +129,6 @@ const INDIAN_BANKS: BankConfig[] = [
     shortName: 'Axis',
     code: 'AXIS',
     accentClass: 'bg-rose-800 text-white',
-    portalUrl: 'https://retail.axisbank.co.in/',
     popular: true
   },
   {
@@ -142,7 +137,6 @@ const INDIAN_BANKS: BankConfig[] = [
     shortName: 'Kotak',
     code: 'KTK',
     accentClass: 'bg-red-700 text-white',
-    portalUrl: 'https://netbanking.kotak.com/knb2/',
     popular: true
   },
   {
@@ -151,7 +145,6 @@ const INDIAN_BANKS: BankConfig[] = [
     shortName: 'IOB',
     code: 'IOB',
     accentClass: 'bg-sky-900 text-white',
-    portalUrl: 'https://www.iobnet.co.in/ibanking/login.do',
     popular: true
   },
   {
@@ -160,7 +153,6 @@ const INDIAN_BANKS: BankConfig[] = [
     shortName: 'Indian Bank',
     code: 'INDB',
     accentClass: 'bg-sky-800 text-white',
-    portalUrl: 'https://www.indianbank.net.in/',
     popular: false
   },
   {
@@ -169,7 +161,6 @@ const INDIAN_BANKS: BankConfig[] = [
     shortName: 'Canara',
     code: 'CNR',
     accentClass: 'bg-cyan-700 text-white',
-    portalUrl: 'https://online.canarabank.in/',
     popular: false
   },
   {
@@ -178,7 +169,6 @@ const INDIAN_BANKS: BankConfig[] = [
     shortName: 'PNB',
     code: 'PNB',
     accentClass: 'bg-amber-700 text-white',
-    portalUrl: 'https://netbanking.netpnb.com/',
     popular: false
   },
   {
@@ -187,7 +177,6 @@ const INDIAN_BANKS: BankConfig[] = [
     shortName: 'BOB',
     code: 'BOB',
     accentClass: 'bg-orange-600 text-white',
-    portalUrl: 'https://www.bobibanking.com/',
     popular: false
   },
   {
@@ -196,7 +185,6 @@ const INDIAN_BANKS: BankConfig[] = [
     shortName: 'Union Bank',
     code: 'UBI',
     accentClass: 'bg-blue-800 text-white',
-    portalUrl: 'https://www.unionbankonline.co.in/',
     popular: false
   }
 ];
@@ -204,19 +192,16 @@ const INDIAN_BANKS: BankConfig[] = [
 interface BankUpiLimitInfo {
   bank: string;
   perTxnAndDailyUpi: string;
-  dailyCountCap: string;
   netBankingLimit: string;
 }
 
 const BANK_UPI_LIMITS: BankUpiLimitInfo[] = [
-  { bank: 'State Bank of India (SBI)', perTxnAndDailyUpi: '₹1,00,000', dailyCountCap: '10 txns / 24h', netBankingLimit: '₹10,00,000' },
-  { bank: 'HDFC Bank', perTxnAndDailyUpi: '₹1,00,000 (₹5k first 24h)', dailyCountCap: '20 txns / 24h', netBankingLimit: '₹10,00,000' },
-  { bank: 'ICICI Bank', perTxnAndDailyUpi: '₹1,00,000', dailyCountCap: '10 txns / 24h', netBankingLimit: '₹10,00,000' },
-  { bank: 'Axis Bank', perTxnAndDailyUpi: '₹1,00,000', dailyCountCap: '20 txns / 24h', netBankingLimit: '₹10,00,000' },
-  { bank: 'Indian Overseas Bank (IOB)', perTxnAndDailyUpi: '₹1,00,000', dailyCountCap: '10 txns / 24h', netBankingLimit: '₹5,00,000' },
-  { bank: 'Indian Bank', perTxnAndDailyUpi: '₹1,00,000', dailyCountCap: '10 txns / 24h', netBankingLimit: '₹5,00,000' },
-  { bank: 'Canara / PNB / BOB / Union', perTxnAndDailyUpi: '₹50,000 – ₹1,00,000', dailyCountCap: '10 – 20 txns / 24h', netBankingLimit: '₹5,00,000' },
-  { bank: 'Browser UPI App Link (NPCI Rule)', perTxnAndDailyUpi: '₹2,000 cap on some banks', dailyCountCap: 'Varies by bank', netBankingLimit: 'Use Bank Transfer / NetBanking' }
+  { bank: 'State Bank of India (SBI)', perTxnAndDailyUpi: '₹1,00,000', netBankingLimit: '₹10,00,000' },
+  { bank: 'HDFC Bank', perTxnAndDailyUpi: '₹1,00,000 (₹5k first 24h)', netBankingLimit: '₹10,00,000' },
+  { bank: 'ICICI Bank', perTxnAndDailyUpi: '₹1,00,000', netBankingLimit: '₹10,00,000' },
+  { bank: 'Axis Bank', perTxnAndDailyUpi: '₹1,00,000', netBankingLimit: '₹10,00,000' },
+  { bank: 'Indian Overseas Bank (IOB)', perTxnAndDailyUpi: '₹1,00,000', netBankingLimit: '₹5,00,000' },
+  { bank: 'Canara / PNB / BOB / Union', perTxnAndDailyUpi: '₹50,000 – ₹1,00,000', netBankingLimit: '₹5,00,000' }
 ];
 
 async function copyTextSafely(text: string): Promise<boolean> {
@@ -243,12 +228,6 @@ async function copyTextSafely(text: string): Promise<boolean> {
   }
 }
 
-function formatTimer(totalSeconds: number): string {
-  const mins = Math.floor(totalSeconds / 60);
-  const secs = totalSeconds % 60;
-  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-}
-
 interface RazorpaySuccessPayload {
   razorpay_order_id: string;
   razorpay_payment_id: string;
@@ -257,7 +236,7 @@ interface RazorpaySuccessPayload {
 
 interface RazorpayCheckoutInstance {
   open: () => void;
-  on: (event: string, cb: (resp: { error?: { description?: string } }) => void) => void;
+  on: (event: string, cb: (resp: { error?: { description?: string; reason?: string } }) => void) => void;
 }
 
 type RazorpayConstructor = new (options: Record<string, unknown>) => RazorpayCheckoutInstance;
@@ -267,7 +246,9 @@ async function loadRazorpayCheckoutScript(): Promise<RazorpayConstructor | null>
   if (win.Razorpay) return win.Razorpay;
 
   return new Promise((resolve) => {
-    const existing = document.querySelector<HTMLScriptElement>('script[src="https://checkout.razorpay.com/v1/checkout.js"]');
+    const existing = document.querySelector<HTMLScriptElement>(
+      'script[src="https://checkout.razorpay.com/v1/checkout.js"]'
+    );
     if (existing) {
       existing.addEventListener('load', () => resolve(win.Razorpay || null), { once: true });
       existing.addEventListener('error', () => resolve(null), { once: true });
@@ -298,44 +279,37 @@ export const CheckoutModal: React.FC = () => {
     showToast
   } = useShop();
 
-  // Flipkart / Amazon Checkout Flow:
+  // Clean 3-Step Razorpay Standard Checkout Flow:
   // 1. 'details' -> Delivery Address & Item Summary
-  // 2. 'payment' -> Flipkart / Amazon Payment Selection (NO QR code, direct "Pay ₹Amount")
-  // 3. 'gateway' -> Dedicated Internet Banking / UPI Gateway screen (only returns to store after completing payment)
-  // 4. 'pending' -> Returned to Store: Real-Time Payment Verification Pending screen
-  const [step, setStep] = useState<'details' | 'payment' | 'gateway' | 'pending'>('details');
-  const [gatewayPhase, setGatewayPhase] = useState<'connecting' | 'portal'>('connecting');
-  const [gatewaySessionId, setGatewaySessionId] = useState<string>('');
-  const [gatewaySecondsLeft, setGatewaySecondsLeft] = useState<number>(600);
+  // 2. 'payment' -> Payment Method Selection + Razorpay Standard Checkout + Failure/Retry Handling
+  // 3. 'confirmed' -> Server-Verified Payment & Order Confirmation Receipt
+  const [step, setStep] = useState<'details' | 'payment' | 'confirmed'>('details');
 
   const [selectedPayment, setSelectedPayment] = useState<PaymentOptionId>('gpay');
   const [selectedBankId, setSelectedBankId] = useState<string>('sbi');
   const [customerUpiId, setCustomerUpiId] = useState<string>('');
-
-  const [transactionIdInput, setTransactionIdInput] = useState('');
-  const [splitMode, setSplitMode] = useState(false);
-  const [splitFirstAmount, setSplitFirstAmount] = useState<number>(0);
-  const [splitSecondTxnId, setSplitSecondTxnId] = useState('');
   const [showBankLimitsGuide, setShowBankLimitsGuide] = useState(false);
-  const [showAlternativeOptions, setShowAlternativeOptions] = useState(false);
-  const [paymentConfirmedCheck, setPaymentConfirmedCheck] = useState(false);
 
   const [createdOrder, setCreatedOrder] = useState<Order | null>(null);
   const [liveStatus, setLiveStatus] = useState<Order['status']>('Processing');
-  const [liveVerified, setLiveVerified] = useState<boolean>(false);
-  const [razorpayVerified, setRazorpayVerified] = useState<boolean>(false);
   const [liveTrackingNumber, setLiveTrackingNumber] = useState<string>('');
-  const [gatewayConfig, setGatewayConfig] = useState<{ razorpayEnabled: boolean; keyId: string | null }>({
-    razorpayEnabled: false,
-    keyId: null
-  });
-  const [isLaunchingGateway, setIsLaunchingGateway] = useState<boolean>(false);
-  const [showManualQrFallback, setShowManualQrFallback] = useState<boolean>(false);
 
-  const [copiedVpa, setCopiedVpa] = useState(false);
-  const [copiedAmount, setCopiedAmount] = useState(false);
-  const [copiedAcctNo, setCopiedAcctNo] = useState(false);
-  const [copiedIfsc, setCopiedIfsc] = useState(false);
+  const [gatewayConfig, setGatewayConfig] = useState<{
+    razorpayEnabled: boolean;
+    keyId: string | null;
+    isTestMode: boolean;
+  }>({
+    razorpayEnabled: false,
+    keyId: null,
+    isTestMode: false
+  });
+  const [configLoading, setConfigLoading] = useState<boolean>(false);
+  const [configError, setConfigError] = useState<string | null>(null);
+
+  const [paymentStatus, setPaymentStatus] = useState<PaymentLifecycleStatus>('idle');
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+  const checkoutOutcomeRef = useRef<boolean>(false);
+
   const [copiedOrderId, setCopiedOrderId] = useState(false);
   const [copiedTxn, setCopiedTxn] = useState(false);
 
@@ -348,22 +322,45 @@ export const CheckoutModal: React.FC = () => {
   const [stateName, setStateName] = useState('Tamil Nadu');
   const [pin, setPin] = useState('');
 
-  // Check if Razorpay Live Gateway is configured on server (/api/payments/config)
+  // Fetch Razorpay public configuration from server (/api/payments/config)
   useEffect(() => {
     if (activeModal !== 'checkout') return;
+    let cancelled = false;
+    setConfigLoading(true);
+    setConfigError(null);
+
     fetch('/api/payments/config')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: { razorpayEnabled?: boolean; keyId?: string | null } | null) => {
-        if (data && typeof data.razorpayEnabled === 'boolean') {
-          setGatewayConfig({
-            razorpayEnabled: data.razorpayEnabled,
-            keyId: data.keyId || null
-          });
+      .then(async (res) => {
+        if (!res.ok) {
+          throw new Error('Could not load payment gateway configuration');
         }
+        return (await res.json()) as {
+          razorpayEnabled?: boolean;
+          keyId?: string | null;
+          isTestMode?: boolean;
+        };
+      })
+      .then((data) => {
+        if (cancelled) return;
+        const enabled = Boolean(data?.razorpayEnabled && data?.keyId);
+        setGatewayConfig({
+          razorpayEnabled: enabled,
+          keyId: enabled ? data.keyId || null : null,
+          isTestMode: Boolean(data?.isTestMode || data?.keyId?.startsWith('rzp_test_'))
+        });
       })
       .catch(() => {
-        // Fallback smoothly to Direct QR / Bank Transfer
+        if (cancelled) return;
+        setGatewayConfig({ razorpayEnabled: false, keyId: null, isTestMode: false });
+        setConfigError('Unable to reach payment gateway configuration service. Please refresh and try again.');
+      })
+      .finally(() => {
+        if (!cancelled) setConfigLoading(false);
       });
+
+    return () => {
+      cancelled = true;
+    };
   }, [activeModal]);
 
   // Scroll modal back to top whenever checkout step changes
@@ -375,33 +372,11 @@ export const CheckoutModal: React.FC = () => {
     }
   }, [step, activeModal]);
 
-  // Gateway connection animation & session countdown
-  useEffect(() => {
-    if (step !== 'gateway') return;
-    setGatewayPhase('connecting');
-    setGatewaySecondsLeft(600);
-    setShowAlternativeOptions(false);
-
-    const connectTimer = window.setTimeout(() => {
-      setGatewayPhase('portal');
-    }, 950);
-
-    const countdownInterval = window.setInterval(() => {
-      setGatewaySecondsLeft((prev) => (prev > 0 ? prev - 1 : 0));
-    }, 1000);
-
-    return () => {
-      window.clearTimeout(connectTimer);
-      window.clearInterval(countdownInterval);
-    };
-  }, [step]);
-
-  // Subscribe live to Firestore /orderStatus/{orderId} once order is submitted
+  // Subscribe live to Firestore /orderStatus/{orderId} once verified order is created
   useEffect(() => {
     if (!createdOrder?.id) return;
 
     setLiveStatus(createdOrder.status);
-    setLiveVerified(createdOrder.status !== 'Processing');
     setLiveTrackingNumber(createdOrder.trackingNumber || '');
 
     const unsub = onSnapshot(
@@ -410,12 +385,10 @@ export const CheckoutModal: React.FC = () => {
         if (snap.exists()) {
           const data = snap.data() as {
             status?: Order['status'];
-            paymentVerified?: boolean;
             trackingNumber?: string;
           };
-          if (data.status) setLiveStatus(data.status);
-          if (typeof data.paymentVerified === 'boolean') {
-            setLiveVerified(data.paymentVerified);
+          if (data.status && data.status !== 'Processing') {
+            setLiveStatus(data.status);
           }
           if (data.trackingNumber) {
             setLiveTrackingNumber(data.trackingNumber);
@@ -435,8 +408,9 @@ export const CheckoutModal: React.FC = () => {
     if (!createdOrder?.id) return;
     const matched = orders.find((o) => o.id === createdOrder.id);
     if (matched) {
-      setLiveStatus(matched.status);
-      setLiveVerified(matched.status !== 'Processing');
+      if (matched.status !== 'Processing') {
+        setLiveStatus(matched.status);
+      }
       if (matched.trackingNumber) {
         setLiveTrackingNumber(matched.trackingNumber);
       }
@@ -448,133 +422,36 @@ export const CheckoutModal: React.FC = () => {
   const selectedBank = INDIAN_BANKS.find((b) => b.id === selectedBankId) || INDIAN_BANKS[0];
   const selectedOption = PAYMENT_OPTIONS.find((o) => o.id === selectedPayment) || PAYMENT_OPTIONS[0];
   const itemCount = cart.reduce((sum, it) => sum + it.quantity, 0);
-
-  const isAndroidDevice =
-    typeof navigator !== 'undefined' &&
-    (/Android/i.test(navigator.userAgent) ||
-      (/Linux/i.test(navigator.platform || '') && navigator.maxTouchPoints > 1));
-  const isIosTouchDevice =
-    typeof navigator !== 'undefined' &&
-    (/iPhone|iPad|iPod/i.test(navigator.userAgent) ||
-      (/Macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1));
-  const isMobileDevice =
-    typeof navigator !== 'undefined' &&
-    (isAndroidDevice ||
-      isIosTouchDevice ||
-      (/Mobile/i.test(navigator.userAgent) && !/Windows|Mac OS X/i.test(navigator.userAgent)));
-
-  const formatUpiAmount = (amountInr: number): string => {
-    const clean = Math.max(1, Number(amountInr) || 1);
-    return Number.isInteger(clean) ? String(clean) : clean.toFixed(2);
-  };
-
-  // Native UPI Deep Link builder: upi://pay?pa=banayaenterprise100-1@oksbi&pn=BanayaEnterprise&am=TOTAL_AMOUNT&cu=INR
-  const buildNativeUpiUrl = (amountInr?: number): string =>
-    amountInr !== undefined
-      ? `upi://pay?pa=${BANAYA_UPI_ID}&pn=BanayaEnterprise&am=${formatUpiAmount(amountInr)}&cu=INR`
-      : `upi://pay?pa=${BANAYA_UPI_ID}&pn=BanayaEnterprise&cu=INR`;
-
-  const buildUpiIntentMap = (
-    amountInr: number
-  ): Record<Exclude<PaymentOptionId, 'netbanking'>, string> => {
-    const params = `pa=${BANAYA_UPI_ID}&pn=BanayaEnterprise&am=${formatUpiAmount(amountInr)}&cu=INR`;
-    return {
-      gpay: isAndroidDevice
-        ? `intent://upi/pay?${params}#Intent;scheme=tez;package=com.google.android.apps.nbu.paisa.user;end;`
-        : `tez://upi/pay?${params}`,
-      phonepe: isAndroidDevice
-        ? `intent://pay?${params}#Intent;scheme=upi;package=com.phonepe.app;end;`
-        : `phonepe://pay?${params}`,
-      paytm: isAndroidDevice
-        ? `intent://pay?${params}#Intent;scheme=upi;package=net.one97.paytm;end;`
-        : `paytmmp://pay?${params}`,
-      upi: `upi://pay?${params}`
-    };
-  };
-
-  // Manual-amount deep links without pre-locked amount (avoids browser am= limit blocks inside GPay & PhonePe)
-  const safeBaseParams = `pa=${BANAYA_UPI_ID}&pn=BanayaEnterprise&cu=INR`;
-  const appDirectOpenMap: Record<Exclude<PaymentOptionId, 'netbanking'>, string> = {
-    gpay: isAndroidDevice
-      ? `intent://upi/pay?${safeBaseParams}#Intent;scheme=tez;package=com.google.android.apps.nbu.paisa.user;end;`
-      : `tez://upi/pay?${safeBaseParams}`,
-    phonepe: isAndroidDevice
-      ? `intent://pay?${safeBaseParams}#Intent;scheme=upi;package=com.phonepe.app;end;`
-      : `phonepe://pay?${safeBaseParams}`,
-    paytm: isAndroidDevice
-      ? `intent://pay?${safeBaseParams}#Intent;scheme=upi;package=net.one97.paytm;end;`
-      : `paytmmp://pay?${safeBaseParams}`,
-    upi: buildNativeUpiUrl()
-  };
-
-  const canSplitPayment = cartTotal >= 20;
-  const effectiveSplitFirst = canSplitPayment
-    ? Math.min(Math.max(1, splitFirstAmount || Math.ceil(cartTotal / 2)), cartTotal - 1)
-    : cartTotal;
-  const effectiveSplitSecond = Math.max(1, cartTotal - effectiveSplitFirst);
-
-  const upiIntentMap = buildUpiIntentMap(cartTotal);
-  const splitPart1Links = buildUpiIntentMap(effectiveSplitFirst);
-  const splitPart2Links = buildUpiIntentMap(effectiveSplitSecond);
-
-  const handleLaunchPaymentApp = (
-    _e: React.MouseEvent<HTMLAnchorElement>,
-    appLabel: string
-  ) => {
-    void copyTextSafely(BANAYA_UPI_ID);
-    setCopiedVpa(true);
-    window.setTimeout(() => setCopiedVpa(false), 3000);
-
-    if (!isMobileDevice) {
-      showToast(
-        `Opening ${appLabel} UPI Link`,
-        `UPI ID (${BANAYA_UPI_ID}) copied! Complete ₹${cartTotal.toLocaleString('en-IN')} in your UPI app or use Net Banking on desktop.`,
-        'info'
-      );
-      return;
-    }
-
-    showToast(
-      `Opening ${appLabel}...`,
-      `Authorizing ₹${cartTotal.toLocaleString('en-IN')} to Banaya Enterprise (${BANAYA_UPI_ID}).`,
-      'info'
-    );
-  };
+  const isBusy =
+    paymentStatus === 'creating_order' ||
+    paymentStatus === 'checkout_open' ||
+    paymentStatus === 'verifying';
+  const isGatewayReady = gatewayConfig.razorpayEnabled && Boolean(gatewayConfig.keyId);
 
   const activeOrderDisplay: Order | null = createdOrder
     ? {
         ...createdOrder,
-        status: razorpayVerified && liveStatus === 'Processing' ? 'Confirmed' : liveStatus,
+        status: liveStatus === 'Processing' ? 'Confirmed' : liveStatus,
         trackingNumber: liveTrackingNumber || createdOrder.trackingNumber
       }
     : null;
 
-  const isPaymentVerified = liveVerified || razorpayVerified;
-
   const resetCheckoutState = () => {
     setStep('details');
-    setGatewayPhase('connecting');
-    setGatewaySessionId('');
     setSelectedPayment('gpay');
     setSelectedBankId('sbi');
     setCustomerUpiId('');
-    setTransactionIdInput('');
-    setSplitMode(false);
-    setSplitFirstAmount(0);
-    setSplitSecondTxnId('');
     setShowBankLimitsGuide(false);
-    setShowAlternativeOptions(false);
-    setShowManualQrFallback(false);
-    setPaymentConfirmedCheck(false);
     setCreatedOrder(null);
     setLiveStatus('Processing');
-    setLiveVerified(false);
-    setRazorpayVerified(false);
     setLiveTrackingNumber('');
-    setIsLaunchingGateway(false);
+    setPaymentStatus('idle');
+    setPaymentError(null);
+    checkoutOutcomeRef.current = false;
   };
 
   const handleCloseModal = () => {
+    if (paymentStatus === 'verifying') return;
     setActiveModal(null);
     resetCheckoutState();
   };
@@ -603,13 +480,25 @@ export const CheckoutModal: React.FC = () => {
       return;
     }
 
+    setPaymentStatus('idle');
+    setPaymentError(null);
     setStep('payment');
   };
 
-  // Primary Pay ₹{cartTotal} trigger: opens Razorpay Live Checkout (auto-verifies & credits bank account)
+  // Trigger Razorpay Standard Checkout -> Verify HMAC Signature on Server -> Save Order in Firestore
   const handleInitiateDirectPay = async () => {
     if (cart.length === 0) {
       showToast('Empty Bag', 'Your shopping bag is empty.', 'warning');
+      return;
+    }
+
+    if (!isGatewayReady) {
+      const msg =
+        configError ||
+        'Razorpay payment gateway is not configured. Please ensure RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET are set in server environment variables.';
+      setPaymentStatus('failed');
+      setPaymentError(msg);
+      showToast('Payment Gateway Unavailable', msg, 'warning');
       return;
     }
 
@@ -618,22 +507,21 @@ export const CheckoutModal: React.FC = () => {
       if (!/^[a-zA-Z0-9._-]{2,}@[a-zA-Z0-9]{2,}$/.test(cleanUpi)) {
         showToast(
           'Check UPI ID Format',
-          'Please enter a valid UPI ID (for example: yourname@oksbi or yourname@ybl), or leave blank to choose any UPI app / QR in Razorpay.',
+          'Please enter a valid UPI ID (for example: yourname@oksbi or success@razorpay in Test Mode), or leave blank to choose inside Razorpay.',
           'warning'
         );
         return;
       }
     }
 
-    if (gatewayConfig.razorpayEnabled && gatewayConfig.keyId) {
-      setIsLaunchingGateway(true);
-      try {
-        const RazorpayCtor = await loadRazorpayCheckoutScript();
-        if (!RazorpayCtor) {
-          throw new Error('Could not load Razorpay checkout script');
-        }
+    setPaymentStatus('creating_order');
+    setPaymentError(null);
+    checkoutOutcomeRef.current = false;
 
-        const orderRes = await fetch('/api/payments/razorpay/create-order', {
+    try {
+      const [RazorpayCtor, orderRes] = await Promise.all([
+        loadRazorpayCheckoutScript(),
+        fetch('/api/payments/razorpay/create-order', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -643,266 +531,140 @@ export const CheckoutModal: React.FC = () => {
             phone: phone.trim(),
             email: email.trim()
           })
-        });
+        })
+      ]);
 
-        const orderData = (await orderRes.json()) as {
-          orderId?: string;
-          amount?: number;
-          currency?: string;
-          keyId?: string;
-          error?: string;
-        };
+      if (!RazorpayCtor) {
+        throw new Error('Could not load Razorpay Standard Checkout script. Please check your connection and retry.');
+      }
 
-        if (!orderRes.ok || !orderData.orderId) {
-          throw new Error(orderData.error || 'Could not initialize Razorpay order');
-        }
+      const orderData = (await orderRes.json()) as {
+        orderId?: string;
+        amount?: number;
+        currency?: string;
+        keyId?: string;
+        error?: string;
+      };
 
-        const rzp = new RazorpayCtor({
-          key: orderData.keyId || gatewayConfig.keyId,
-          amount: orderData.amount,
-          currency: orderData.currency || 'INR',
-          name: 'Banaya Enterprise',
-          description: `Order Payment (₹${cartTotal.toLocaleString('en-IN')})`,
-          order_id: orderData.orderId,
-          prefill: {
-            name: name.trim(),
-            email: email.trim(),
-            contact: phone.trim(),
-            method: selectedPayment === 'netbanking' ? 'netbanking' : 'upi',
-            ...(selectedPayment === 'upi' && customerUpiId.trim()
-              ? { vpa: customerUpiId.trim() }
-              : {})
-          },
-          notes: {
-            store: 'Banaya Enterprise',
-            selected_option: selectedOption.label
-          },
-          theme: { color: '#064E3B' },
-          handler: async (response: RazorpaySuccessPayload) => {
-            try {
-              const verifyRes = await fetch('/api/payments/razorpay/verify', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(response)
-              });
-              const verifyData = (await verifyRes.json()) as {
-                verified?: boolean;
-                paymentId?: string;
-              };
+      if (!orderRes.ok || !orderData.orderId) {
+        throw new Error(orderData.error || 'Could not create Razorpay order on server.');
+      }
 
-              const verifiedOk = Boolean(verifyRes.ok && verifyData.verified);
-              const paymentMethodLabel = `${
-                selectedPayment === 'netbanking' ? `Net Banking (${selectedBank.name})` : selectedOption.label
-              } (Razorpay Verified)`;
+      const paymentMethodLabel = `${
+        selectedPayment === 'netbanking' ? `Net Banking (${selectedBank.name})` : selectedOption.label
+      } (Razorpay Verified)`;
 
-              const order = placeOrder({
-                customerName: name.trim(),
-                phone: phone.trim(),
-                email: email.trim(),
-                shippingAddress: `${address.trim()}, ${stateName.trim() || 'India'}`,
-                city: city.trim(),
-                postalCode: pin.trim(),
-                paymentMethod: paymentMethodLabel.slice(0, 155),
-                transactionId: response.razorpay_payment_id,
-                bankRef: response.razorpay_order_id
-              });
+      const rzp = new RazorpayCtor({
+        key: orderData.keyId || gatewayConfig.keyId,
+        amount: orderData.amount,
+        currency: orderData.currency || 'INR',
+        name: 'Banaya Enterprise',
+        description: `Order Payment (₹${cartTotal.toLocaleString('en-IN')})`,
+        order_id: orderData.orderId,
+        prefill: {
+          name: name.trim(),
+          email: email.trim(),
+          contact: phone.trim(),
+          method: selectedPayment === 'netbanking' ? 'netbanking' : 'upi',
+          ...(selectedPayment === 'upi' && customerUpiId.trim()
+            ? { vpa: customerUpiId.trim() }
+            : {})
+        },
+        notes: {
+          store: 'Banaya Enterprise',
+          selected_option: selectedOption.label,
+          bank: selectedPayment === 'netbanking' ? selectedBank.shortName : ''
+        },
+        theme: { color: '#064E3B' },
+        modal: {
+          ondismiss: () => {
+            if (checkoutOutcomeRef.current) return;
+            checkoutOutcomeRef.current = true;
+            setPaymentStatus('failed');
+            setPaymentError('Payment was cancelled before completion. Click Retry Payment to try again.');
+            showToast(
+              'Payment Cancelled',
+              'You closed the payment window before completing payment. Your bag items are safe.',
+              'warning'
+            );
+          }
+        },
+        handler: async (response: RazorpaySuccessPayload) => {
+          checkoutOutcomeRef.current = true;
+          setPaymentStatus('verifying');
+          setPaymentError(null);
 
-              setCreatedOrder(order);
-              setRazorpayVerified(verifiedOk);
-              setLiveStatus(verifiedOk ? 'Confirmed' : 'Processing');
-              setLiveVerified(verifiedOk);
-              setLiveTrackingNumber(order.trackingNumber);
-              setStep('pending');
-              showToast(
-                verifiedOk ? 'Payment Verified & Order Confirmed' : 'Payment Submitted',
-                `Payment ${response.razorpay_payment_id} for ₹${cartTotal.toLocaleString('en-IN')} completed.`,
-                'success'
-              );
-            } catch {
-              showToast(
-                'Verification Pending',
-                'Payment received. Returning to order verification summary.',
-                'info'
+          try {
+            const verifyRes = await fetch('/api/payments/razorpay/verify', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(response)
+            });
+
+            const verifyData = (await verifyRes.json()) as {
+              verified?: boolean;
+              paymentId?: string;
+              orderId?: string;
+              error?: string;
+            };
+
+            if (!verifyRes.ok || verifyData.verified !== true) {
+              throw new Error(
+                verifyData.error || 'Server payment signature verification failed. Order was not confirmed.'
               );
             }
+
+            const savedOrder = await placeOrder({
+              customerName: name.trim(),
+              phone: phone.trim(),
+              email: email.trim(),
+              shippingAddress: `${address.trim()}, ${stateName.trim() || 'India'}`,
+              city: city.trim(),
+              postalCode: pin.trim(),
+              paymentMethod: paymentMethodLabel.slice(0, 155),
+              transactionId: response.razorpay_payment_id,
+              bankRef: response.razorpay_order_id
+            });
+
+            setCreatedOrder(savedOrder);
+            setLiveStatus('Confirmed');
+            setLiveTrackingNumber(savedOrder.trackingNumber);
+            setPaymentStatus('verified');
+            setStep('confirmed');
+            showToast(
+              'Payment Verified & Order Confirmed',
+              `Payment ${response.razorpay_payment_id} verified for ₹${cartTotal.toLocaleString('en-IN')}.`,
+              'success'
+            );
+          } catch (verifyOrSaveErr) {
+            const errMessage =
+              (verifyOrSaveErr as Error)?.message ||
+              'Payment verification or order saving failed. Please retry or contact support with your payment ID.';
+            setPaymentStatus('failed');
+            setPaymentError(errMessage);
+            showToast('Verification Failed', errMessage, 'warning');
           }
-        });
+        }
+      });
 
-        rzp.on('payment.failed', (errResp) => {
-          setShowManualQrFallback(true);
-          showToast(
-            'Razorpay Payment Cancelled / Failed',
-            errResp?.error?.description || 'You can retry Razorpay or use the QR / Bank Transfer option below.',
-            'warning'
-          );
-        });
+      rzp.on('payment.failed', (errResp) => {
+        checkoutOutcomeRef.current = true;
+        const failReason =
+          errResp?.error?.description ||
+          'Payment failed at the gateway. Please retry payment or select another method.';
+        setPaymentStatus('failed');
+        setPaymentError(failReason);
+        showToast('Payment Failed', failReason, 'warning');
+      });
 
-        rzp.open();
-        setIsLaunchingGateway(false);
-        return;
-      } catch (err) {
-        setIsLaunchingGateway(false);
-        setShowManualQrFallback(true);
-        showToast(
-          'Razorpay Unavailable on This URL',
-          (err as Error)?.message || 'You can complete payment using the Banaya QR code below.',
-          'info'
-        );
-        return;
-      }
+      setPaymentStatus('checkout_open');
+      rzp.open();
+    } catch (err) {
+      const errMsg = (err as Error)?.message || 'Unable to start Razorpay Checkout. Please retry.';
+      setPaymentStatus('failed');
+      setPaymentError(errMsg);
+      showToast('Checkout Error', errMsg, 'warning');
     }
-
-    if (selectedPayment !== 'netbanking') {
-      try {
-        window.location.href = upiIntentMap[selectedPayment];
-      } catch {
-        // Gateway screen below also provides QR + direct native upi:// launch links
-      }
-    }
-
-    const sessionId = `GW-${Date.now().toString().slice(-8)}`;
-    setGatewaySessionId(sessionId);
-    setTransactionIdInput('');
-    setSplitSecondTxnId('');
-    setSplitMode(false);
-    setSplitFirstAmount(cartTotal >= 20 ? Math.ceil(cartTotal / 2) : cartTotal);
-    setPaymentConfirmedCheck(false);
-    setStep('gateway');
-  };
-
-  const handleOpenGatewayForDesktopQr = () => {
-    const sessionId = `GW-${Date.now().toString().slice(-8)}`;
-    setGatewaySessionId(sessionId);
-    setTransactionIdInput('');
-    setSplitSecondTxnId('');
-    setSplitMode(false);
-    setSplitFirstAmount(cartTotal >= 20 ? Math.ceil(cartTotal / 2) : cartTotal);
-    setPaymentConfirmedCheck(false);
-    setStep('gateway');
-  };
-
-  const handleDirectAnchorStepTransition = (
-    e: React.MouseEvent<HTMLAnchorElement>,
-    appLabel: string
-  ) => {
-    if (selectedPayment === 'upi' && customerUpiId.trim()) {
-      const cleanUpi = customerUpiId.trim();
-      if (!/^[a-zA-Z0-9._-]{2,}@[a-zA-Z0-9]{2,}$/.test(cleanUpi)) {
-        e.preventDefault();
-        showToast(
-          'Check UPI ID Format',
-          'Please enter a valid UPI ID (for example: yourname@oksbi or yourname@ybl), or leave blank to open your UPI app directly.',
-          'warning'
-        );
-        return;
-      }
-    }
-
-    void copyTextSafely(BANAYA_UPI_ID);
-    setCopiedVpa(true);
-    window.setTimeout(() => setCopiedVpa(false), 3000);
-
-    showToast(
-      `Opening ${appLabel}...`,
-      `Authorizing ₹${cartTotal.toLocaleString('en-IN')} to Banaya Enterprise (${BANAYA_UPI_ID}).`,
-      'info'
-    );
-
-    const sessionId = `GW-${Date.now().toString().slice(-8)}`;
-    setGatewaySessionId(sessionId);
-    setTransactionIdInput('');
-    setSplitSecondTxnId('');
-    setSplitMode(false);
-    setSplitFirstAmount(cartTotal >= 20 ? Math.ceil(cartTotal / 2) : cartTotal);
-    setPaymentConfirmedCheck(false);
-    window.setTimeout(() => {
-      setStep('gateway');
-    }, 200);
-  };
-
-  // Complete Payment inside the Net Banking / UPI Gateway & Return to Store Page
-  const handleCompleteGatewayAndReturn = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (cart.length === 0) {
-      showToast('Empty Bag', 'Your shopping bag is empty.', 'warning');
-      return;
-    }
-
-    const cleanedTxn = transactionIdInput.trim().replace(/\s+/g, '');
-    if (cleanedTxn.length < 6 || !/^[a-zA-Z0-9_/-]+$/.test(cleanedTxn)) {
-      showToast(
-        'Transaction Reference Required',
-        splitMode
-          ? `Please enter the Part 1 (₹${effectiveSplitFirst.toLocaleString('en-IN')}) UTR / Reference Number (min 6 characters).`
-          : selectedPayment === 'netbanking'
-            ? `Please enter the ${selectedBank.shortName} Bank Reference / UTR Number (minimum 6 characters).`
-            : 'Please enter the UPI Transaction ID / UTR Number (minimum 6 characters) after completing payment.',
-        'warning'
-      );
-      return;
-    }
-
-    let combinedTxnRef = cleanedTxn.slice(0, 115);
-    if (splitMode && canSplitPayment) {
-      const cleanedTxn2 = splitSecondTxnId.trim().replace(/\s+/g, '');
-      if (cleanedTxn2.length < 6 || !/^[a-zA-Z0-9_/-]+$/.test(cleanedTxn2)) {
-        showToast(
-          'Part 2 UTR Required',
-          `Please enter the Part 2 (₹${effectiveSplitSecond.toLocaleString('en-IN')}) UTR / Reference Number after completing both smaller transfers.`,
-          'warning'
-        );
-        return;
-      }
-      combinedTxnRef = `${cleanedTxn} + ${cleanedTxn2}`.slice(0, 115);
-    }
-
-    if (!paymentConfirmedCheck) {
-      showToast(
-        'Confirm Completed Payment',
-        'Please tick the checkbox confirming your payment was completed before returning to Banaya Enterprise.',
-        'warning'
-      );
-      return;
-    }
-
-    const baseMethodLabel =
-      selectedPayment === 'netbanking'
-        ? `Net Banking (${selectedBank.name})`
-        : selectedPayment === 'upi'
-          ? customerUpiId.trim()
-            ? `UPI (${customerUpiId.trim()})`
-            : `UPI (${BANAYA_UPI_ID})`
-          : `${selectedOption.label} (${BANAYA_UPI_ID})`;
-
-    const paymentMethodLabel = (
-      splitMode && canSplitPayment
-        ? `${baseMethodLabel} [Split: ₹${effectiveSplitFirst}+₹${effectiveSplitSecond}]`
-        : baseMethodLabel
-    ).slice(0, 155);
-
-    const order = placeOrder({
-      customerName: name.trim(),
-      phone: phone.trim(),
-      email: email.trim(),
-      shippingAddress: `${address.trim()}, ${stateName.trim() || 'India'}`,
-      city: city.trim(),
-      postalCode: pin.trim(),
-      paymentMethod: paymentMethodLabel,
-      transactionId: combinedTxnRef,
-      bankRef: combinedTxnRef
-    });
-
-    setCreatedOrder(order);
-    setLiveStatus('Processing');
-    setLiveVerified(false);
-    setLiveTrackingNumber(order.trackingNumber);
-    setStep('pending');
-
-    showToast(
-      'Returned to Banaya Enterprise',
-      `Order ${order.id} submitted with reference ${combinedTxnRef}. Payment verification is in progress.`,
-      'info'
-    );
   };
 
   const handleCopyValue = async (
@@ -931,50 +693,36 @@ export const CheckoutModal: React.FC = () => {
         className="bg-[#F1F3F6] rounded-2xl max-w-5xl w-full max-h-[95vh] overflow-y-auto border border-slate-200 shadow-2xl relative my-auto"
       >
         {/* Top Checkout Header Bar */}
-        <div
-          className={`px-4 sm:px-6 py-3.5 sticky top-0 z-30 flex items-center justify-between gap-3 border-b ${
-            step === 'gateway'
-              ? 'bg-slate-900 text-white border-slate-800'
-              : 'bg-[#064E3B] text-white border-emerald-900/40'
-          }`}
-        >
+        <div className="px-4 sm:px-6 py-3.5 sticky top-0 z-30 flex items-center justify-between gap-3 border-b bg-[#064E3B] text-white border-emerald-900/40">
           <div className="flex items-center gap-3 min-w-0">
             <div className="w-9 h-9 rounded-lg bg-white p-1 shrink-0 flex items-center justify-center">
-              {step === 'gateway' && selectedPayment === 'netbanking' ? (
-                <Landmark className="w-5 h-5 text-slate-900" />
-              ) : (
-                <img
-                  src="/images/banaya_logo.png"
-                  alt="Banaya Enterprises"
-                  className="w-full h-full object-contain"
-                />
-              )}
+              <img
+                src="/images/banaya_logo.png"
+                alt="Banaya Enterprises"
+                className="w-full h-full object-contain"
+              />
             </div>
             <div className="min-w-0">
               <h2 className="font-heading text-base sm:text-lg font-bold leading-tight truncate">
                 {step === 'details' && 'Secure Checkout — Delivery Address'}
                 {step === 'payment' && 'Payments — Banaya Enterprise'}
-                {step === 'gateway' &&
-                  (selectedPayment === 'netbanking'
-                    ? `${selectedBank.name} — Internet Banking Gateway`
-                    : `${selectedOption.label} — Secure Payment Gateway`)}
-                {step === 'pending' &&
-                  (isPaymentVerified ? 'Payment Verified & Order Confirmed' : 'Payment Verification Pending')}
+                {step === 'confirmed' && 'Payment Verified & Order Confirmed'}
               </h2>
               <p className="text-[11px] sm:text-xs text-slate-200/90 truncate">
                 {step === 'details' && 'Step 1 · Enter delivery address'}
-                {step === 'payment' && `Step 2 · Choose Net Banking or UPI · Total ₹${cartTotal.toLocaleString('en-IN')}`}
-                {step === 'gateway' &&
-                  `Merchant: Banaya Enterprise · Amount: ₹${cartTotal.toLocaleString('en-IN')} · Complete payment to return`}
-                {step === 'pending' &&
-                  (isPaymentVerified
-                    ? `Order ${activeOrderDisplay?.id} confirmed for dispatch`
-                    : `Order ${activeOrderDisplay?.id} · Awaiting merchant verification`)}
+                {step === 'payment' &&
+                  `Step 2 · Pay securely via Razorpay · Total ₹${cartTotal.toLocaleString('en-IN')}`}
+                {step === 'confirmed' && `Order ${activeOrderDisplay?.id} confirmed for dispatch`}
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2.5 shrink-0">
+            {isGatewayReady && gatewayConfig.isTestMode && (
+              <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-400/20 border border-amber-300/40 text-[11px] text-amber-200 font-semibold">
+                Test Mode
+              </span>
+            )}
             <span className="hidden sm:inline-flex items-center gap-1 text-[11px] text-emerald-100 font-medium">
               <Lock className="w-3.5 h-3.5 text-amber-300" /> 100% Secure
             </span>
@@ -982,85 +730,78 @@ export const CheckoutModal: React.FC = () => {
               id="close-checkout-btn"
               type="button"
               onClick={handleCloseModal}
+              disabled={paymentStatus === 'verifying'}
               aria-label="Close checkout"
-              className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors cursor-pointer"
+              className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-50 text-white flex items-center justify-center transition-colors cursor-pointer"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
         </div>
 
-        {/* Clean Progress Strip (Hidden during full-focus Bank Gateway redirect screen) */}
-        {step !== 'gateway' && (
-          <div className="bg-white border-b border-slate-200 px-4 sm:px-6 py-2.5">
-            <div className="flex items-center justify-between max-w-2xl mx-auto text-xs font-medium">
-              <div
-                className={`flex items-center gap-2 ${
-                  step === 'details' ? 'text-[#064E3B] font-semibold' : 'text-emerald-700'
+        {/* Clean Progress Strip */}
+        <div className="bg-white border-b border-slate-200 px-4 sm:px-6 py-2.5">
+          <div className="flex items-center justify-between max-w-2xl mx-auto text-xs font-medium">
+            <div
+              className={`flex items-center gap-2 ${
+                step === 'details' ? 'text-[#064E3B] font-semibold' : 'text-emerald-700'
+              }`}
+            >
+              <span
+                className={`w-5 h-5 rounded-full text-[11px] font-bold flex items-center justify-center ${
+                  step === 'details' ? 'bg-[#064E3B] text-white' : 'bg-emerald-600 text-white'
                 }`}
               >
-                <span
-                  className={`w-5 h-5 rounded-full text-[11px] font-bold flex items-center justify-center ${
-                    step === 'details' ? 'bg-[#064E3B] text-white' : 'bg-emerald-600 text-white'
-                  }`}
-                >
-                  {step !== 'details' ? <Check className="w-3 h-3" /> : '1'}
-                </span>
-                <span>Delivery Address</span>
-              </div>
+                {step !== 'details' ? <Check className="w-3 h-3" /> : '1'}
+              </span>
+              <span>Delivery Address</span>
+            </div>
 
-              <div className="flex-1 h-px bg-slate-200 mx-2 sm:mx-4" />
+            <div className="flex-1 h-px bg-slate-200 mx-2 sm:mx-4" />
 
-              <div
-                className={`flex items-center gap-2 ${
-                  step === 'payment'
-                    ? 'text-[#064E3B] font-semibold'
-                    : step === 'pending'
-                      ? 'text-emerald-700'
-                      : 'text-slate-400'
-                }`}
-              >
-                <span
-                  className={`w-5 h-5 rounded-full text-[11px] font-bold flex items-center justify-center ${
-                    step === 'payment'
-                      ? 'bg-[#064E3B] text-white'
-                      : step === 'pending'
-                        ? 'bg-emerald-600 text-white'
-                        : 'bg-slate-200 text-slate-500'
-                  }`}
-                >
-                  {step === 'pending' ? <Check className="w-3 h-3" /> : '2'}
-                </span>
-                <span>Payment Options</span>
-              </div>
-
-              <div className="flex-1 h-px bg-slate-200 mx-2 sm:mx-4" />
-
-              <div
-                className={`flex items-center gap-2 ${
-                  step === 'pending'
-                    ? isPaymentVerified
-                      ? 'text-emerald-700 font-semibold'
-                      : 'text-amber-700 font-semibold'
+            <div
+              className={`flex items-center gap-2 ${
+                step === 'payment'
+                  ? 'text-[#064E3B] font-semibold'
+                  : step === 'confirmed'
+                    ? 'text-emerald-700'
                     : 'text-slate-400'
+              }`}
+            >
+              <span
+                className={`w-5 h-5 rounded-full text-[11px] font-bold flex items-center justify-center ${
+                  step === 'payment'
+                    ? 'bg-[#064E3B] text-white'
+                    : step === 'confirmed'
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-slate-200 text-slate-500'
                 }`}
               >
-                <span
-                  className={`w-5 h-5 rounded-full text-[11px] font-bold flex items-center justify-center ${
-                    step === 'pending'
-                      ? isPaymentVerified
-                        ? 'bg-emerald-600 text-white'
-                        : 'bg-amber-500 text-white'
-                      : 'bg-slate-200 text-slate-500'
-                  }`}
-                >
-                  {step === 'pending' && isPaymentVerified ? <Check className="w-3 h-3" /> : '3'}
-                </span>
-                <span>{isPaymentVerified ? 'Confirmed' : 'Verification'}</span>
-              </div>
+                {step === 'confirmed' ? <Check className="w-3 h-3" /> : '2'}
+              </span>
+              <span>Payment Options</span>
+            </div>
+
+            <div className="flex-1 h-px bg-slate-200 mx-2 sm:mx-4" />
+
+            <div
+              className={`flex items-center gap-2 ${
+                step === 'confirmed' ? 'text-emerald-700 font-semibold' : 'text-slate-400'
+              }`}
+            >
+              <span
+                className={`w-5 h-5 rounded-full text-[11px] font-bold flex items-center justify-center ${
+                  step === 'confirmed'
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-slate-200 text-slate-500'
+                }`}
+              >
+                {step === 'confirmed' ? <Check className="w-3 h-3" /> : '3'}
+              </span>
+              <span>Confirmed</span>
             </div>
           </div>
-        )}
+        </div>
 
         {/* ==================== STEP 1: DELIVERY ADDRESS & SUMMARY ==================== */}
         {step === 'details' && (
@@ -1281,11 +1022,11 @@ export const CheckoutModal: React.FC = () => {
           </form>
         )}
 
-        {/* ==================== STEP 2: FLIPKART / AMAZON STYLE PAYMENT METHODS (NO QR CODE) ==================== */}
+        {/* ==================== STEP 2: RAZORPAY STANDARD CHECKOUT PAYMENT OPTIONS ==================== */}
         {step === 'payment' && (
           <div className="p-3 sm:p-6">
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 items-start">
-              {/* Left Column: Address Recap Strip + 5 Payment Options */}
+              {/* Left Column: Address Recap + 5 Payment Options + Status Alerts */}
               <div className="lg:col-span-8 space-y-4">
                 {/* Compact Delivery Summary Bar */}
                 <div className="bg-white rounded-xl border border-slate-200 px-4 py-3 flex items-center justify-between gap-3">
@@ -1302,16 +1043,67 @@ export const CheckoutModal: React.FC = () => {
                   </div>
                   <button
                     type="button"
+                    disabled={isBusy}
                     onClick={() => setStep('details')}
-                    className="px-3 py-1.5 rounded-md border border-slate-200 hover:bg-slate-50 text-xs font-medium text-[#064E3B] shrink-0 cursor-pointer"
+                    className="px-3 py-1.5 rounded-md border border-slate-200 hover:bg-slate-50 disabled:opacity-50 text-xs font-medium text-[#064E3B] shrink-0 cursor-pointer"
                   >
                     Change
                   </button>
                 </div>
 
-                {/* Payment Options Accordion (Exact 5 Allowed Methods — Zero QR Code) */}
+                {/* Verifying Payment Banner */}
+                {paymentStatus === 'verifying' && (
+                  <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-4 flex items-center gap-3 text-xs sm:text-sm text-emerald-950">
+                    <Loader2 className="w-5 h-5 text-[#064E3B] animate-spin shrink-0" />
+                    <div>
+                      <div className="font-semibold">Verifying Payment Signature &amp; Saving Order...</div>
+                      <p className="text-xs text-emerald-800">
+                        Confirming transaction authenticity with Banaya Enterprise server. Please do not close this window.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Gateway Unavailable Warning (No Simulated Fallback) */}
+                {!configLoading && !isGatewayReady && (
+                  <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 flex items-start gap-3 text-xs text-amber-950">
+                    <AlertTriangle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <div className="font-semibold text-sm">Payment Gateway Not Ready</div>
+                      <p className="leading-relaxed">
+                        {configError ||
+                          'Razorpay API credentials (RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET) are not configured on the server. Payments cannot be processed until server environment variables are active.'}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Payment Failed / Cancelled Retry Banner */}
+                {paymentStatus === 'failed' && paymentError && (
+                  <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-rose-950">
+                    <div className="flex items-start gap-2.5">
+                      <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                      <div className="space-y-0.5">
+                        <div className="font-semibold text-sm">Payment Not Completed</div>
+                        <p className="text-rose-800 leading-relaxed">{paymentError}</p>
+                      </div>
+                    </div>
+                    <button
+                      id="retry-payment-btn"
+                      type="button"
+                      disabled={isBusy || !isGatewayReady}
+                      onClick={() => void handleInitiateDirectPay()}
+                      className="h-9 px-4 rounded-lg bg-[#FB641B] hover:bg-[#ea580c] disabled:opacity-50 text-white font-semibold text-xs inline-flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Retry Payment</span>
+                    </button>
+                  </div>
+                )}
+
+                {/* Payment Options Accordion (Razorpay Standard Checkout Only) */}
                 <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs">
-                  <div className="bg-[#064E3B] text-white px-4 py-3 flex items-center justify-between">
+                  <div className="bg-[#064E3B] text-white px-4 py-3 flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2.5 text-sm font-semibold">
                       <span className="w-5 h-5 rounded bg-white text-[#064E3B] text-xs font-bold flex items-center justify-center">
                         2
@@ -1334,8 +1126,15 @@ export const CheckoutModal: React.FC = () => {
                           {/* Radio Option Row */}
                           <button
                             type="button"
-                            onClick={() => setSelectedPayment(option.id)}
-                            className="w-full px-4 py-3.5 flex items-center justify-between gap-3 text-left hover:bg-slate-50/80 transition-colors cursor-pointer"
+                            disabled={isBusy}
+                            onClick={() => {
+                              setSelectedPayment(option.id);
+                              if (paymentStatus === 'failed') {
+                                setPaymentStatus('idle');
+                                setPaymentError(null);
+                              }
+                            }}
+                            className="w-full px-4 py-3.5 flex items-center justify-between gap-3 text-left hover:bg-slate-50/80 disabled:opacity-60 transition-colors cursor-pointer"
                           >
                             <div className="flex items-center gap-3 min-w-0">
                               <span
@@ -1374,11 +1173,10 @@ export const CheckoutModal: React.FC = () => {
                             </span>
                           </button>
 
-                          {/* Expanded Payment Action Panel */}
+                          {/* Expanded Razorpay Standard Checkout Action Panel */}
                           {isSelected && (
                             <div className="px-4 pb-5 pt-3 sm:pl-11 border-t border-slate-100 space-y-4">
                               {option.id === 'netbanking' ? (
-                                /* AMAZON / FLIPKART STYLE NET BANKING */
                                 <div className="space-y-4">
                                   <div>
                                     <div className="text-xs font-semibold text-slate-700 mb-2">
@@ -1391,6 +1189,7 @@ export const CheckoutModal: React.FC = () => {
                                           <button
                                             key={bank.id}
                                             type="button"
+                                            disabled={isBusy}
                                             onClick={() => setSelectedBankId(bank.id)}
                                             className={`p-2.5 rounded-lg border text-left flex items-center gap-2.5 transition-all cursor-pointer ${
                                               activeBank
@@ -1421,6 +1220,7 @@ export const CheckoutModal: React.FC = () => {
                                     </label>
                                     <select
                                       id="checkout-other-banks"
+                                      disabled={isBusy}
                                       value={selectedBankId}
                                       onChange={(e) => setSelectedBankId(e.target.value)}
                                       className="w-full h-10 px-3 rounded-lg border border-slate-300 bg-white text-sm text-slate-900 focus:outline-hidden focus:border-[#064E3B]"
@@ -1442,316 +1242,112 @@ export const CheckoutModal: React.FC = () => {
                                     </select>
                                   </div>
 
-                                  {/* Official Banaya Enterprise Beneficiary Account Details for IMPS / NEFT / RTGS */}
-                                  <div className="rounded-xl border border-slate-200 bg-white p-3.5 space-y-2.5 text-xs">
-                                    <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2">
-                                      <span className="font-semibold text-slate-900">
-                                        Beneficiary Account (For {selectedBank.shortName} IMPS / NEFT / RTGS)
-                                      </span>
-                                      <span className="text-[11px] font-semibold text-emerald-700">
-                                        {BANAYA_BANK_DETAILS.bankName}
-                                      </span>
-                                    </div>
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                                      <div className="bg-slate-50 rounded-lg px-2.5 py-2 border border-slate-200 flex items-center justify-between gap-2">
-                                        <div className="min-w-0">
-                                          <span className="text-[10px] text-slate-500 block">Account Number</span>
-                                          <strong className="font-mono text-slate-900 text-xs sm:text-sm">
-                                            {BANAYA_BANK_DETAILS.accountNumber}
-                                          </strong>
-                                        </div>
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            void handleCopyValue(
-                                              BANAYA_BANK_DETAILS.accountNumber,
-                                              setCopiedAcctNo,
-                                              'Account Number'
-                                            )
-                                          }
-                                          className="h-7 px-2 rounded border border-slate-300 bg-white hover:bg-slate-100 text-[11px] font-medium text-slate-700 inline-flex items-center gap-1 shrink-0 cursor-pointer"
-                                        >
-                                          {copiedAcctNo ? (
-                                            <Check className="w-3 h-3 text-emerald-600" />
-                                          ) : (
-                                            <Copy className="w-3 h-3" />
-                                          )}
-                                          <span>Copy</span>
-                                        </button>
-                                      </div>
-
-                                      <div className="bg-slate-50 rounded-lg px-2.5 py-2 border border-slate-200 flex items-center justify-between gap-2">
-                                        <div className="min-w-0">
-                                          <span className="text-[10px] text-slate-500 block">IFSC Code</span>
-                                          <strong className="font-mono text-slate-900 text-xs sm:text-sm">
-                                            {BANAYA_BANK_DETAILS.ifscCode}
-                                          </strong>
-                                        </div>
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            void handleCopyValue(
-                                              BANAYA_BANK_DETAILS.ifscCode,
-                                              setCopiedIfsc,
-                                              'IFSC Code'
-                                            )
-                                          }
-                                          className="h-7 px-2 rounded border border-slate-300 bg-white hover:bg-slate-100 text-[11px] font-medium text-slate-700 inline-flex items-center gap-1 shrink-0 cursor-pointer"
-                                        >
-                                          {copiedIfsc ? (
-                                            <Check className="w-3 h-3 text-emerald-600" />
-                                          ) : (
-                                            <Copy className="w-3 h-3" />
-                                          )}
-                                          <span>Copy</span>
-                                        </button>
-                                      </div>
-                                    </div>
-                                    <div className="text-[11px] text-slate-500 flex flex-wrap items-center justify-between gap-2">
-                                      <span>
-                                        Beneficiary: <strong className="text-slate-800">{BANAYA_BANK_DETAILS.accountHolder}</strong>
-                                      </span>
-                                      <span>
-                                        Branch: <strong className="text-slate-800">{BANAYA_BANK_DETAILS.branch}</strong>
-                                      </span>
-                                    </div>
-                                  </div>
-
                                   <div className="flex flex-col sm:flex-row sm:items-center gap-3 pt-1">
                                     <button
                                       id="pay-netbanking-btn"
                                       type="button"
-                                      disabled={isLaunchingGateway}
+                                      disabled={isBusy || configLoading || !isGatewayReady}
                                       onClick={() => void handleInitiateDirectPay()}
-                                      className="w-full sm:w-auto min-w-[230px] h-11 px-6 rounded-lg bg-[#FB641B] hover:bg-[#ea580c] disabled:opacity-60 text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer tabular-nums"
+                                      className="w-full sm:w-auto min-w-[230px] h-11 px-6 rounded-lg bg-[#FB641B] hover:bg-[#ea580c] disabled:opacity-50 text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer tabular-nums"
                                     >
-                                      {isLaunchingGateway ? (
-                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                      {isBusy ? (
+                                        <>
+                                          <Loader2 className="w-4 h-4 animate-spin" />
+                                          <span>
+                                            {paymentStatus === 'verifying'
+                                              ? 'Verifying Payment...'
+                                              : 'Opening Razorpay...'}
+                                          </span>
+                                        </>
                                       ) : (
                                         <>
-                                          <span>Pay ₹{cartTotal.toLocaleString('en-IN')} via {selectedBank.shortName}</span>
+                                          <span>Pay Now ₹{cartTotal.toLocaleString('en-IN')} ({selectedBank.shortName})</span>
                                           <ArrowRight className="w-4 h-4" />
                                         </>
                                       )}
                                     </button>
                                     <span className="text-[11px] text-slate-500">
-                                      {gatewayConfig.razorpayEnabled
-                                        ? `Opens Razorpay NetBanking for ${selectedBank.shortName} — credits directly to Banaya Enterprise.`
-                                        : `Redirects to ${selectedBank.shortName} Internet Banking to complete payment.`}
+                                      Opens Razorpay Standard Checkout for {selectedBank.shortName} NetBanking.
                                     </span>
                                   </div>
                                 </div>
                               ) : (
-                                <div className="space-y-4">
-                                  {/* RAZORPAY INSTANT PAYMENT (AUTO QR ON DESKTOP / DIRECT UPI APPS ON MOBILE / DIRECT BANK CREDIT) */}
-                                  {gatewayConfig.razorpayEnabled && (
-                                    <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4 sm:p-5 space-y-3">
-                                      <div className="flex items-start justify-between gap-2 flex-wrap">
-                                        <div>
-                                          <div className="text-[11px] font-semibold uppercase tracking-wider text-emerald-700 flex items-center gap-1.5">
-                                            <BadgeCheck className="w-3.5 h-3.5" />
-                                            <span>Razorpay Live Checkout · Instant Bank Settlement</span>
-                                          </div>
-                                          <h4 className="text-sm sm:text-base font-bold text-slate-900 mt-0.5">
-                                            Pay{' '}
-                                            <span className="tabular-nums text-[#064E3B]">
-                                              ₹{cartTotal.toLocaleString('en-IN')}
-                                            </span>{' '}
-                                            via {option.label}
-                                          </h4>
-                                        </div>
-                                      </div>
-
-                                      <p className="text-xs text-slate-600 leading-relaxed">
-                                        {isMobileDevice
-                                          ? `Tap Pay below to open Razorpay Verified Checkout with ${option.label}. No bank limit error — payment settles directly into Banaya Enterprise's bank account and confirms your order immediately.`
-                                          : `Click Pay below to view the live Razorpay UPI QR Code (scan with ${option.label} / any UPI app) or pay directly. Confirms your order automatically and credits Banaya Enterprise's bank account.`}
-                                      </p>
-
-                                      {option.id === 'upi' && (
-                                        <div className="max-w-sm">
-                                          <label
-                                            htmlFor="checkout-upi-id"
-                                            className="block text-[11px] font-semibold text-slate-700 mb-1"
-                                          >
-                                            Your UPI ID (Optional — leave blank to scan QR or pick app)
-                                          </label>
-                                          <input
-                                            id="checkout-upi-id"
-                                            type="text"
-                                            value={customerUpiId}
-                                            onChange={(e) => setCustomerUpiId(e.target.value)}
-                                            placeholder="yourname@oksbi or yourname@ybl"
-                                            className="w-full h-9 px-3 rounded-lg border border-slate-300 bg-white font-mono text-xs text-slate-900 placeholder:font-sans placeholder:text-slate-400 focus:outline-hidden focus:border-[#064E3B]"
-                                          />
-                                        </div>
-                                      )}
-
-                                      <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-3">
-                                        <button
-                                          id={`pay-${option.id}-btn`}
-                                          type="button"
-                                          disabled={isLaunchingGateway}
-                                          onClick={() => void handleInitiateDirectPay()}
-                                          className="w-full sm:w-auto min-w-[250px] h-11 px-6 rounded-lg bg-[#FB641B] hover:bg-[#ea580c] disabled:opacity-60 text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer tabular-nums"
-                                        >
-                                          {isLaunchingGateway ? (
-                                            <Loader2 className="w-4 h-4 animate-spin" />
-                                          ) : (
-                                            <>
-                                              <span>Pay ₹{cartTotal.toLocaleString('en-IN')} with {option.label}</span>
-                                              <ArrowRight className="w-4 h-4" />
-                                            </>
-                                          )}
-                                        </button>
-
-                                        <button
-                                          type="button"
-                                          onClick={() => setShowManualQrFallback((v) => !v)}
-                                          className="text-xs font-medium text-[#064E3B] hover:underline inline-flex items-center gap-1 cursor-pointer"
-                                        >
-                                          <QrCode className="w-3.5 h-3.5" />
-                                          <span>
-                                            {showManualQrFallback
-                                              ? 'Hide Direct Banaya QR Code'
-                                              : 'Or Scan Banaya Direct QR Code'}
-                                          </span>
-                                        </button>
-                                      </div>
-
-                                      <p className="text-[11px] text-slate-500 flex items-start gap-1.5 leading-relaxed">
-                                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-700 shrink-0 mt-0.5" />
+                                <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4 sm:p-5 space-y-3">
+                                  <div className="flex items-start justify-between gap-2 flex-wrap">
+                                    <div>
+                                      <div className="text-[11px] font-semibold uppercase tracking-wider text-emerald-700 flex items-center gap-1.5">
+                                        <BadgeCheck className="w-3.5 h-3.5" />
                                         <span>
-                                          100% encrypted Razorpay Verified Gateway. No manual UTR required when paid via Razorpay.
+                                          Razorpay Standard Checkout
+                                          {gatewayConfig.isTestMode ? ' · Test Mode' : ''}
                                         </span>
-                                      </p>
-                                    </div>
-                                  )}
-
-                                  {/* DIRECT BANAYA UPI QR CODE CARD (Primary when Razorpay off, or 1-click toggle fallback) */}
-                                  {(!gatewayConfig.razorpayEnabled || showManualQrFallback) && (
-                                    <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-4">
-                                      <div className="flex flex-col sm:flex-row items-center sm:items-start gap-5">
-                                        <div className="shrink-0 bg-slate-50 rounded-xl border border-slate-200 p-3 flex flex-col items-center gap-2">
-                                          <img
-                                            src={BANAYA_UPI_QR_IMAGE}
-                                            alt="Banaya Enterprise UPI QR Code"
-                                            className="w-44 h-auto rounded-lg object-contain bg-white border border-slate-200"
-                                          />
-                                          <span className="text-[11px] font-medium text-slate-600 flex items-center gap-1">
-                                            <QrCode className="w-3.5 h-3.5 text-[#064E3B]" />
-                                            Scan with {option.id === 'upi' ? 'any UPI App' : option.label}
-                                          </span>
-                                          <a
-                                            href={BANAYA_UPI_QR_IMAGE}
-                                            download="banaya-enterprise-upi-qr.png"
-                                            className="w-full h-8 px-2.5 rounded-md border border-slate-300 bg-white hover:bg-slate-100 text-slate-800 text-[11px] font-semibold inline-flex items-center justify-center gap-1.5 transition-colors"
-                                          >
-                                            <Download className="w-3.5 h-3.5 text-[#064E3B]" />
-                                            <span>Save QR Image</span>
-                                          </a>
-                                        </div>
-
-                                        <div className="flex-1 space-y-3 text-xs w-full">
-                                          <div>
-                                            <div className="text-[11px] font-semibold uppercase tracking-wider text-emerald-700">
-                                              Direct Scan &amp; Pay ({option.label})
-                                            </div>
-                                            <h4 className="text-sm sm:text-base font-bold text-slate-900 mt-0.5">
-                                              Pay{' '}
-                                              <span className="tabular-nums text-[#064E3B]">
-                                                ₹{cartTotal.toLocaleString('en-IN')}
-                                              </span>{' '}
-                                              to Banaya Enterprise
-                                            </h4>
-                                          </div>
-
-                                          <ol className="space-y-1.5 text-slate-600 list-decimal list-inside">
-                                            <li>
-                                              {isMobileDevice ? (
-                                                <>
-                                                  Tap <strong>Save QR Image</strong> &rarr; open{' '}
-                                                  <strong>{option.id === 'upi' ? 'Google Pay, PhonePe, Paytm or WhatsApp Pay' : option.label}</strong> &rarr; <strong>Scan QR / Upload from gallery</strong> (or tap Open App below).
-                                                </>
-                                              ) : (
-                                                <>
-                                                  Open <strong>{option.id === 'upi' ? 'Google Pay, PhonePe, Paytm or WhatsApp Pay' : option.label}</strong> on your mobile phone and tap <strong>Scan any QR</strong>.
-                                                </>
-                                              )}
-                                            </li>
-                                            <li>
-                                              Enter exact amount{' '}
-                                              <strong className="text-slate-900 tabular-nums">
-                                                ₹{cartTotal.toLocaleString('en-IN')}
-                                              </strong>{' '}
-                                              and complete payment with your UPI PIN.
-                                            </li>
-                                            <li>
-                                              Tap <strong>Submit UTR ID</strong> below to enter your 12-digit UTR / Transaction ID for order verification.
-                                            </li>
-                                          </ol>
-
-                                          <div className="flex flex-wrap items-center gap-2 pt-1">
-                                            <button
-                                              type="button"
-                                              onClick={() => void handleCopyValue(BANAYA_UPI_ID, setCopiedVpa, 'UPI ID')}
-                                              className="h-8 px-2.5 rounded-md border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-800 font-mono text-[11px] font-semibold inline-flex items-center gap-1.5 cursor-pointer"
-                                            >
-                                              <span>{BANAYA_UPI_ID}</span>
-                                              {copiedVpa ? (
-                                                <Check className="w-3 h-3 text-emerald-600" />
-                                              ) : (
-                                                <Copy className="w-3 h-3 text-slate-500" />
-                                              )}
-                                            </button>
-                                            <button
-                                              type="button"
-                                              onClick={() => void handleCopyValue(String(cartTotal), setCopiedAmount, 'Amount')}
-                                              className="h-8 px-2.5 rounded-md border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-800 font-mono text-[11px] font-semibold inline-flex items-center gap-1.5 cursor-pointer"
-                                            >
-                                              <span>Amount: ₹{cartTotal.toLocaleString('en-IN')}</span>
-                                              {copiedAmount ? (
-                                                <Check className="w-3 h-3 text-emerald-600" />
-                                              ) : (
-                                                <Copy className="w-3 h-3 text-slate-500" />
-                                              )}
-                                            </button>
-                                          </div>
-
-                                          <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2.5 pt-1">
-                                            {isMobileDevice && (
-                                              <a
-                                                id={`direct-${option.id}-btn`}
-                                                href={upiIntentMap[option.id]}
-                                                onClick={(e) => handleDirectAnchorStepTransition(e, option.label)}
-                                                className="h-11 px-5 rounded-lg bg-[#064E3B] hover:bg-[#047857] text-white font-semibold text-sm inline-flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer tabular-nums"
-                                              >
-                                                <Smartphone className="w-4 h-4" />
-                                                <span>Open {option.label} (₹{cartTotal.toLocaleString('en-IN')})</span>
-                                              </a>
-                                            )}
-
-                                            <button
-                                              id={gatewayConfig.razorpayEnabled ? `qr-utr-${option.id}-btn` : `pay-${option.id}-btn`}
-                                              type="button"
-                                              onClick={handleOpenGatewayForDesktopQr}
-                                              className="min-w-[230px] h-11 px-5 rounded-lg bg-[#FB641B] hover:bg-[#ea580c] text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer tabular-nums"
-                                            >
-                                              <span>I Paid ₹{cartTotal.toLocaleString('en-IN')} — Submit UTR ID</span>
-                                              <ArrowRight className="w-4 h-4" />
-                                            </button>
-                                          </div>
-
-                                          <p className="text-[11px] text-slate-500 flex items-start gap-1.5 leading-relaxed">
-                                            <ShieldCheck className="w-3.5 h-3.5 text-emerald-700 shrink-0 mt-0.5" />
-                                            <span>
-                                              We never ask for your UPI PIN here. Your UPI app shows an NPCI safety reminder (&ldquo;Never enter your UPI PIN to receive money&rdquo;) because PIN is only for <strong>paying</strong> your order amount to <strong>Banaya Enterprise</strong>.
-                                            </span>
-                                          </p>
-                                        </div>
                                       </div>
+                                      <h4 className="text-sm sm:text-base font-bold text-slate-900 mt-0.5">
+                                        Pay{' '}
+                                        <span className="tabular-nums text-[#064E3B]">
+                                          ₹{cartTotal.toLocaleString('en-IN')}
+                                        </span>{' '}
+                                        with {option.label}
+                                      </h4>
+                                    </div>
+                                  </div>
+
+                                  <p className="text-xs text-slate-600 leading-relaxed">
+                                    Click <strong>Pay Now</strong> to open Razorpay Standard Checkout with {option.label}, cards, wallets, or NetBanking. Your order is saved and confirmed immediately after server signature verification.
+                                  </p>
+
+                                  {option.id === 'upi' && (
+                                    <div className="max-w-sm">
+                                      <label
+                                        htmlFor="checkout-upi-id"
+                                        className="block text-[11px] font-semibold text-slate-700 mb-1"
+                                      >
+                                        Your UPI ID (Optional — e.g. success@razorpay in Test Mode)
+                                      </label>
+                                      <input
+                                        id="checkout-upi-id"
+                                        type="text"
+                                        disabled={isBusy}
+                                        value={customerUpiId}
+                                        onChange={(e) => setCustomerUpiId(e.target.value)}
+                                        placeholder="yourname@oksbi or success@razorpay"
+                                        className="w-full h-9 px-3 rounded-lg border border-slate-300 bg-white font-mono text-xs text-slate-900 placeholder:font-sans placeholder:text-slate-400 focus:outline-hidden focus:border-[#064E3B]"
+                                      />
                                     </div>
                                   )}
+
+                                  <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-3">
+                                    <button
+                                      id={`pay-${option.id}-btn`}
+                                      type="button"
+                                      disabled={isBusy || configLoading || !isGatewayReady}
+                                      onClick={() => void handleInitiateDirectPay()}
+                                      className="w-full sm:w-auto min-w-[250px] h-11 px-6 rounded-lg bg-[#FB641B] hover:bg-[#ea580c] disabled:opacity-50 text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer tabular-nums"
+                                    >
+                                      {isBusy ? (
+                                        <>
+                                          <Loader2 className="w-4 h-4 animate-spin" />
+                                          <span>
+                                            {paymentStatus === 'verifying'
+                                              ? 'Verifying Payment...'
+                                              : 'Opening Razorpay...'}
+                                          </span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <span>Pay Now ₹{cartTotal.toLocaleString('en-IN')}</span>
+                                          <ArrowRight className="w-4 h-4" />
+                                        </>
+                                      )}
+                                    </button>
+                                  </div>
+
+                                  <p className="text-[11px] text-slate-500 flex items-start gap-1.5 leading-relaxed">
+                                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-700 shrink-0 mt-0.5" />
+                                    <span>
+                                      256-bit encrypted Razorpay Standard Checkout with automatic server-side signature verification.
+                                    </span>
+                                  </p>
                                 </div>
                               )}
                             </div>
@@ -1808,8 +1404,10 @@ export const CheckoutModal: React.FC = () => {
                         </span>
                       </div>
                       <div className="flex justify-between">
-                        <span>Merchant</span>
-                        <span className="font-medium text-slate-800">Banaya Enterprise</span>
+                        <span>Gateway</span>
+                        <span className="font-medium text-slate-800">
+                          Razorpay {gatewayConfig.isTestMode ? '(Test Mode)' : 'Checkout'}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -1821,7 +1419,7 @@ export const CheckoutModal: React.FC = () => {
                     <span>Prepaid Checkout &amp; Bank Limit Guide</span>
                   </div>
                   <p className="text-[11px] leading-relaxed text-slate-500">
-                    Cash on Delivery is not available. If your UPI app shows &ldquo;exceeded bank limit&rdquo;, use <strong>Net Banking</strong> (up to ₹10L limit) or pay manually inside GPay/PhonePe using UPI ID <code className="font-mono text-slate-800">{BANAYA_UPI_ID}</code>.
+                    Cash on Delivery is not available. All payments are processed securely via Razorpay Standard Checkout (UPI, Cards, Wallets, and NetBanking up to ₹10L).
                   </p>
                   <button
                     type="button"
@@ -1836,7 +1434,10 @@ export const CheckoutModal: React.FC = () => {
                   {showBankLimitsGuide && (
                     <div className="pt-2 border-t border-slate-100 space-y-1.5">
                       {BANK_UPI_LIMITS.map((row) => (
-                        <div key={row.bank} className="text-[11px] flex items-start justify-between gap-2 py-1 border-b border-slate-100 last:border-b-0">
+                        <div
+                          key={row.bank}
+                          className="text-[11px] flex items-start justify-between gap-2 py-1 border-b border-slate-100 last:border-b-0"
+                        >
                           <span className="font-medium text-slate-800">{row.bank}</span>
                           <span className="text-right text-slate-600 tabular-nums shrink-0">
                             {row.perTxnAndDailyUpi}
@@ -1851,615 +1452,40 @@ export const CheckoutModal: React.FC = () => {
           </div>
         )}
 
-        {/* ==================== STEP 3: DEDICATED INTERNET BANKING / UPI GATEWAY SCREEN ==================== */}
-        {step === 'gateway' && (
-          <div className="p-4 sm:p-8">
-            {gatewayPhase === 'connecting' ? (
-              /* Smooth Gateway Handoff Interstitial */
-              <div className="max-w-lg mx-auto bg-white rounded-xl border border-slate-200 p-8 sm:p-10 text-center space-y-5 shadow-sm">
-                <div className="w-14 h-14 rounded-full bg-slate-100 text-[#064E3B] flex items-center justify-center mx-auto">
-                  <Loader2 className="w-7 h-7 animate-spin" />
-                </div>
-                <div className="space-y-1.5">
-                  <h3 className="font-heading text-xl font-bold text-slate-900">
-                    {selectedPayment === 'netbanking'
-                      ? `Redirecting to ${selectedBank.name}...`
-                      : `Connecting to ${selectedOption.label}...`}
-                  </h3>
-                  <p className="text-xs sm:text-sm text-slate-500">
-                    Preparing secure payment gateway session for{' '}
-                    <strong className="text-slate-900 tabular-nums">
-                      ₹{cartTotal.toLocaleString('en-IN')}
-                    </strong>{' '}
-                    to Banaya Enterprise.
-                  </p>
-                </div>
-                <div className="text-[11px] text-slate-400">
-                  Do not refresh or close this window...
-                </div>
-              </div>
-            ) : (
-              /* Dedicated Full Gateway Screen — Only returns to store after completing payment */
-              <form onSubmit={handleCompleteGatewayAndReturn} className="max-w-2xl mx-auto space-y-4">
-                {/* Bank / Gateway Top Summary Strip */}
-                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
-                  <div className="bg-slate-900 text-white px-4 sm:px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      {selectedPayment === 'netbanking' ? (
-                        <span
-                          className={`px-2.5 py-1 rounded text-xs font-bold ${selectedBank.accentClass}`}
-                        >
-                          {selectedBank.code}
-                        </span>
-                      ) : (
-                        <span className="px-2.5 py-1 rounded bg-emerald-600 text-white text-xs font-bold">
-                          UPI
-                        </span>
-                      )}
-                      <div>
-                        <div className="text-sm font-semibold">
-                          {selectedPayment === 'netbanking'
-                            ? `${selectedBank.name} NetBanking`
-                            : `${selectedOption.label} Gateway`}
-                        </div>
-                        <div className="text-[11px] text-slate-300 font-mono">
-                          Session: {gatewaySessionId}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="text-right">
-                      <div className="text-[11px] text-slate-300">Session expires in</div>
-                      <div className="text-sm font-mono font-bold text-amber-300 tabular-nums">
-                        {formatTimer(gatewaySecondsLeft)}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Merchant & Payable Amount Box */}
-                  <div className="p-4 sm:p-5 bg-slate-50 border-b border-slate-200 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-                    <div>
-                      <span className="text-slate-500 block">Merchant Name</span>
-                      <strong className="text-sm text-slate-900">Banaya Enterprise</strong>
-                    </div>
-                    <div>
-                      <span className="text-slate-500 block">Payable Amount</span>
-                      <strong className="text-lg font-bold text-[#064E3B] tabular-nums">
-                        ₹{cartTotal.toLocaleString('en-IN')}
-                      </strong>
-                    </div>
-                    <div>
-                      <span className="text-slate-500 block">Merchant Payment ID</span>
-                      <div className="flex items-center gap-1.5">
-                        <code className="font-mono font-semibold text-slate-900 truncate">
-                          {BANAYA_UPI_ID}
-                        </code>
-                        <button
-                          type="button"
-                          onClick={() => void handleCopyValue(BANAYA_UPI_ID, setCopiedVpa, 'UPI ID')}
-                          className="p-1 rounded border border-slate-200 bg-white hover:bg-slate-100 text-slate-600 cursor-pointer shrink-0"
-                          title="Copy Merchant ID"
-                        >
-                          {copiedVpa ? (
-                            <Check className="w-3 h-3 text-emerald-600" />
-                          ) : (
-                            <Copy className="w-3 h-3" />
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Action Body */}
-                  <div className="p-4 sm:p-6 space-y-5 bg-white">
-                    {selectedPayment === 'netbanking' ? (
-                      <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/70 space-y-3">
-                        <div className="flex items-start justify-between gap-3 flex-wrap">
-                          <div className="space-y-1">
-                            <h4 className="text-sm font-semibold text-slate-900">
-                              Step 1: Open {selectedBank.name} Internet Banking
-                            </h4>
-                            <p className="text-xs text-slate-600">
-                              Sign in to your {selectedBank.shortName} NetBanking portal and complete an IMPS / NEFT transfer of{' '}
-                              <strong className="text-slate-900 tabular-nums">
-                                ₹{cartTotal.toLocaleString('en-IN')}
-                              </strong>{' '}
-                              to <strong>{BANAYA_BANK_DETAILS.accountHolder}</strong> ({BANAYA_BANK_DETAILS.bankName}). Supports up to ₹5L–₹10L with zero UPI app cap.
-                            </p>
-                          </div>
-
-                          <a
-                            href={selectedBank.portalUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="h-10 px-4 rounded-lg bg-[#064E3B] hover:bg-[#047857] text-white text-xs sm:text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors shrink-0"
-                          >
-                            <span>Open {selectedBank.shortName} NetBanking</span>
-                            <ExternalLink className="w-4 h-4" />
-                          </a>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 bg-white rounded-lg border border-slate-200 p-3 text-xs">
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="min-w-0">
-                              <span className="text-[10px] text-slate-500 block">Account Number</span>
-                              <strong className="font-mono text-slate-900">{BANAYA_BANK_DETAILS.accountNumber}</strong>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                void handleCopyValue(
-                                  BANAYA_BANK_DETAILS.accountNumber,
-                                  setCopiedAcctNo,
-                                  'Account Number'
-                                )
-                              }
-                              className="h-7 px-2 rounded border border-slate-200 hover:bg-slate-50 text-[11px] font-medium text-slate-700 cursor-pointer shrink-0"
-                            >
-                              {copiedAcctNo ? 'Copied' : 'Copy'}
-                            </button>
-                          </div>
-
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="min-w-0">
-                              <span className="text-[10px] text-slate-500 block">IFSC Code</span>
-                              <strong className="font-mono text-slate-900">{BANAYA_BANK_DETAILS.ifscCode}</strong>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                void handleCopyValue(
-                                  BANAYA_BANK_DETAILS.ifscCode,
-                                  setCopiedIfsc,
-                                  'IFSC Code'
-                                )
-                              }
-                              className="h-7 px-2 rounded border border-slate-200 hover:bg-slate-50 text-[11px] font-medium text-slate-700 cursor-pointer shrink-0"
-                            >
-                              {copiedIfsc ? 'Copied' : 'Copy'}
-                            </button>
-                          </div>
-
-                          <div className="min-w-0">
-                            <span className="text-[10px] text-slate-500 block">Bank &amp; Branch</span>
-                            <strong className="text-slate-900 truncate block">
-                              IOB · {BANAYA_BANK_DETAILS.branch}
-                            </strong>
-                          </div>
-                        </div>
-
-                        <div className="pt-2 border-t border-slate-200/80 flex flex-wrap items-center justify-between gap-2 text-xs">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <label htmlFor="gateway-bank-select" className="font-medium text-slate-700">
-                              Change Bank:
-                            </label>
-                            <select
-                              id="gateway-bank-select"
-                              value={selectedBankId}
-                              onChange={(e) => setSelectedBankId(e.target.value)}
-                              className="h-8 px-2.5 rounded-md border border-slate-300 bg-white text-xs text-slate-900"
-                            >
-                              {INDIAN_BANKS.map((b) => (
-                                <option key={b.id} value={b.id}>
-                                  {b.name}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedPayment('gpay');
-                              setStep('payment');
-                            }}
-                            className="text-[11px] font-semibold text-[#064E3B] hover:underline inline-flex items-center gap-1 cursor-pointer"
-                          >
-                            <Smartphone className="w-3.5 h-3.5" />
-                            <span>Prefer Google Pay / PhonePe / Paytm?</span>
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="space-y-4">
-                        {/* Primary Single QR + Direct Pay Card or Split Payment Launcher */}
-                        {!splitMode ? (
-                          <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/70 flex flex-col sm:flex-row items-center gap-4">
-                            <div className="shrink-0 flex flex-col items-center gap-2">
-                              <img
-                                src={BANAYA_UPI_QR_IMAGE}
-                                alt="Banaya Enterprise UPI QR Code"
-                                className="w-36 h-auto rounded-lg object-contain bg-white border border-slate-200"
-                              />
-                              <a
-                                href={BANAYA_UPI_QR_IMAGE}
-                                download="banaya-enterprise-upi-qr.png"
-                                className="w-full h-7 px-2 rounded border border-slate-300 bg-white hover:bg-slate-100 text-slate-800 text-[11px] font-semibold inline-flex items-center justify-center gap-1 transition-colors"
-                              >
-                                <Download className="w-3 h-3 text-[#064E3B]" />
-                                <span>Save QR</span>
-                              </a>
-                            </div>
-                            <div className="space-y-2.5 text-xs flex-1 w-full">
-                              <div className="font-semibold text-slate-900 text-sm">
-                                Step 1: Pay ₹{cartTotal.toLocaleString('en-IN')} via {selectedOption.label}
-                              </div>
-                              <p className="text-slate-600 leading-relaxed">
-                                {isMobileDevice
-                                  ? `Scan or Save QR to pay ₹${cartTotal.toLocaleString('en-IN')} in ${selectedOption.label}, or tap Open ${selectedOption.label} below. Then enter your 12-digit UTR ID in Step 2.`
-                                  : `Scan this QR code from your mobile phone (${selectedOption.label} / any UPI app) to pay ₹${cartTotal.toLocaleString('en-IN')}, then enter your 12-digit UTR ID in Step 2.`}
-                              </p>
-                              <div className="flex flex-wrap items-center gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => void handleCopyValue(BANAYA_UPI_ID, setCopiedVpa, 'UPI ID')}
-                                  className="h-7 px-2.5 rounded border border-slate-300 bg-white hover:bg-slate-100 text-slate-800 font-mono text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer"
-                                >
-                                  <span>{BANAYA_UPI_ID}</span>
-                                  {copiedVpa ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3 text-slate-500" />}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => void handleCopyValue(String(cartTotal), setCopiedAmount, 'Amount')}
-                                  className="h-7 px-2.5 rounded border border-slate-300 bg-white hover:bg-slate-100 text-slate-800 font-mono text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer"
-                                >
-                                  <span>₹{cartTotal.toLocaleString('en-IN')}</span>
-                                  {copiedAmount ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3 text-slate-500" />}
-                                </button>
-                              </div>
-
-                              {isMobileDevice && (
-                                <div className="pt-1">
-                                  <a
-                                    href={upiIntentMap[selectedPayment]}
-                                    onClick={(e) => handleLaunchPaymentApp(e, selectedOption.label)}
-                                    className="w-full sm:w-auto h-10 px-4 rounded-lg bg-[#064E3B] hover:bg-[#047857] text-white text-xs sm:text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors"
-                                  >
-                                    <Smartphone className="w-4 h-4" />
-                                    <span>Open {selectedOption.label} (₹{cartTotal.toLocaleString('en-IN')})</span>
-                                  </a>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        ) : (
-                          /* 2-Part Split Payment Launcher for Bank Per-Txn Limits */
-                          <div className="p-4 rounded-xl border border-emerald-200 bg-emerald-50/50 space-y-3.5">
-                            <div className="flex items-center justify-between gap-2 flex-wrap">
-                              <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-                                <Split className="w-4 h-4 text-[#064E3B]" />
-                                <span>Split Payment into 2 Smaller UPI Transfers</span>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => setSplitMode(false)}
-                                className="text-xs font-medium text-slate-600 hover:text-slate-900 underline cursor-pointer"
-                              >
-                                Back to Single Payment
-                              </button>
-                            </div>
-
-                            <div className="flex flex-wrap items-center gap-3 text-xs bg-white p-3 rounded-lg border border-slate-200">
-                              <label htmlFor="split-part1-amt" className="font-medium text-slate-700">
-                                Part 1 Amount (₹):
-                              </label>
-                              <input
-                                id="split-part1-amt"
-                                type="number"
-                                min={1}
-                                max={cartTotal - 1}
-                                value={effectiveSplitFirst}
-                                onChange={(e) => {
-                                  const val = Number(e.target.value) || 1;
-                                  setSplitFirstAmount(Math.min(Math.max(1, val), cartTotal - 1));
-                                }}
-                                className="w-24 h-8 px-2 rounded border border-slate-300 font-mono font-semibold text-slate-900"
-                              />
-                              <span className="text-slate-600">
-                                + Part 2 Amount: <strong className="font-mono text-slate-900">₹{effectiveSplitSecond.toLocaleString('en-IN')}</strong>
-                              </span>
-                            </div>
-
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                              <a
-                                href={splitPart1Links[selectedPayment]}
-                                rel="noopener noreferrer"
-                                onClick={(e) => handleLaunchPaymentApp(e, `${selectedOption.label} Part 1`)}
-                                className="h-10 px-3 rounded-lg bg-[#064E3B] hover:bg-[#047857] text-white text-xs font-semibold inline-flex items-center justify-center gap-2 transition-colors"
-                              >
-                                <Smartphone className="w-4 h-4" />
-                                <span>Pay Part 1: ₹{effectiveSplitFirst.toLocaleString('en-IN')}</span>
-                              </a>
-                              <a
-                                href={splitPart2Links[selectedPayment]}
-                                rel="noopener noreferrer"
-                                onClick={(e) => handleLaunchPaymentApp(e, `${selectedOption.label} Part 2`)}
-                                className="h-10 px-3 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold inline-flex items-center justify-center gap-2 transition-colors"
-                              >
-                                <Smartphone className="w-4 h-4" />
-                                <span>Pay Part 2: ₹{effectiveSplitSecond.toLocaleString('en-IN')}</span>
-                              </a>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Step 2 inside Gateway: Enter Bank / UPI Reference to Complete Payment & Return to Store */}
-                    <div className="space-y-3 pt-1">
-                      <div className={splitMode && canSplitPayment ? 'grid grid-cols-1 sm:grid-cols-2 gap-3' : ''}>
-                        <div>
-                          <label
-                            htmlFor="gateway-txn-id"
-                            className="block text-xs font-semibold text-slate-800 mb-1"
-                          >
-                            {splitMode && canSplitPayment
-                              ? `Part 1 UTR / Txn ID (₹${effectiveSplitFirst.toLocaleString('en-IN')}) *`
-                              : selectedPayment === 'netbanking'
-                                ? `Step 2: Enter ${selectedBank.shortName} Bank Reference / UTR Number *`
-                                : `Step 2: Enter ${selectedOption.label} Transaction ID / UTR *`}
-                          </label>
-                          <input
-                            id="gateway-txn-id"
-                            type="text"
-                            required
-                            value={transactionIdInput}
-                            onChange={(e) => setTransactionIdInput(e.target.value)}
-                            placeholder={
-                              selectedPayment === 'netbanking'
-                                ? 'e.g. SBI241116009812 or IMPS UTR'
-                                : 'e.g. 432198765432 (12-digit UPI Ref ID)'
-                            }
-                            className="w-full h-10 px-3 rounded-lg border border-slate-300 font-mono text-sm text-slate-900 placeholder:font-sans placeholder:text-slate-400 focus:outline-hidden focus:border-[#064E3B]"
-                          />
-                        </div>
-
-                        {splitMode && canSplitPayment && (
-                          <div>
-                            <label
-                              htmlFor="gateway-txn-id-2"
-                              className="block text-xs font-semibold text-slate-800 mb-1"
-                            >
-                              Part 2 UTR / Txn ID (₹{effectiveSplitSecond.toLocaleString('en-IN')}) *
-                            </label>
-                            <input
-                              id="gateway-txn-id-2"
-                              type="text"
-                              required
-                              value={splitSecondTxnId}
-                              onChange={(e) => setSplitSecondTxnId(e.target.value)}
-                              placeholder="e.g. 432198765499 (2nd UPI Ref ID)"
-                              className="w-full h-10 px-3 rounded-lg border border-slate-300 font-mono text-sm text-slate-900 placeholder:font-sans placeholder:text-slate-400 focus:outline-hidden focus:border-[#064E3B]"
-                            />
-                          </div>
-                        )}
-                      </div>
-                      <p className="text-[11px] text-slate-500">
-                        Enter the 12-digit UTR / Bank Reference shown on your payment receipt after transfer succeeds.
-                      </p>
-
-                      <label className="flex items-start gap-2.5 p-3 rounded-lg bg-slate-50 border border-slate-200 cursor-pointer text-xs text-slate-800">
-                        <input
-                          type="checkbox"
-                          checked={paymentConfirmedCheck}
-                          onChange={(e) => setPaymentConfirmedCheck(e.target.checked)}
-                          className="mt-0.5 w-4 h-4 accent-[#064E3B] cursor-pointer shrink-0"
-                        />
-                        <span>
-                          I have completed the{' '}
-                          <strong>₹{cartTotal.toLocaleString('en-IN')}</strong> payment{' '}
-                          {selectedPayment === 'netbanking'
-                            ? `via ${selectedBank.name}`
-                            : splitMode && canSplitPayment
-                              ? `in 2 transfers via ${selectedOption.label}`
-                              : `via ${selectedOption.label}`}{' '}
-                          and want to return to Banaya Enterprise.
-                        </span>
-                      </label>
-
-                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 pt-2">
-                        <button
-                          id="complete-payment-return-btn"
-                          type="submit"
-                          className="flex-1 h-11 px-5 rounded-lg bg-[#FB641B] hover:bg-[#ea580c] text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer"
-                        >
-                          <span>Complete Payment &amp; Return to Banaya</span>
-                          <ArrowRight className="w-4 h-4" />
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => setStep('payment')}
-                          className="h-11 px-4 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-medium text-slate-700 inline-flex items-center justify-center gap-1.5 cursor-pointer"
-                        >
-                          <ArrowLeft className="w-3.5 h-3.5" />
-                          <span>Cancel &amp; Go Back</span>
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Clean Collapsible Alternative Options (No Scary Warning Banner) */}
-                    {selectedPayment !== 'netbanking' && (
-                      <div className="pt-3 border-t border-slate-200/80">
-                        <button
-                          type="button"
-                          onClick={() => setShowAlternativeOptions((v) => !v)}
-                          className="w-full flex items-center justify-between gap-2 text-xs font-medium text-slate-600 hover:text-slate-900 py-1.5 cursor-pointer"
-                        >
-                          <span>Need another option? (WhatsApp Pay / Bank Transfer / Net Banking)</span>
-                          {showAlternativeOptions ? (
-                            <ChevronUp className="w-4 h-4 shrink-0" />
-                          ) : (
-                            <ChevronDown className="w-4 h-4 shrink-0" />
-                          )}
-                        </button>
-
-                        {showAlternativeOptions && (
-                          <div className="mt-2.5 rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 space-y-3 text-xs">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <a
-                                href={buildNativeUpiUrl(cartTotal)}
-                                onClick={(e) => handleLaunchPaymentApp(e, 'WhatsApp Pay / UPI App')}
-                                className="h-8 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-100 text-slate-800 font-semibold inline-flex items-center gap-1.5"
-                              >
-                                <Smartphone className="w-3.5 h-3.5 text-[#064E3B]" />
-                                <span>Pay via WhatsApp Pay / Any UPI App</span>
-                              </a>
-                              <a
-                                href={appDirectOpenMap[selectedPayment]}
-                                onClick={(e) => handleLaunchPaymentApp(e, `${selectedOption.label} (Manual)`)}
-                                className="h-8 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-100 text-slate-800 font-semibold inline-flex items-center gap-1.5"
-                              >
-                                <span>Open {selectedOption.label} (Manual Amount)</span>
-                              </a>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setSelectedPayment('netbanking');
-                                  setSplitMode(false);
-                                }}
-                                className="h-8 px-3 rounded-md bg-slate-900 hover:bg-slate-800 text-white font-semibold inline-flex items-center gap-1.5 cursor-pointer"
-                              >
-                                <Building2 className="w-3.5 h-3.5" />
-                                <span>Switch to Net Banking</span>
-                              </button>
-                              {canSplitPayment && !splitMode && (
-                                <button
-                                  type="button"
-                                  onClick={() => setSplitMode(true)}
-                                  className="h-8 px-3 rounded-md border border-emerald-700 bg-white hover:bg-emerald-50 text-[#064E3B] font-semibold inline-flex items-center gap-1.5 cursor-pointer"
-                                >
-                                  <Split className="w-3.5 h-3.5" />
-                                  <span>Split into 2 Transfers</span>
-                                </button>
-                              )}
-                            </div>
-
-                            <div className="bg-white rounded-lg border border-slate-200 p-2.5 flex flex-wrap items-center gap-2 text-[11px]">
-                              <span className="font-medium text-slate-700">
-                                {BANAYA_BANK_DETAILS.bankName} ({BANAYA_BANK_DETAILS.branch}):
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  void handleCopyValue(
-                                    BANAYA_BANK_DETAILS.accountNumber,
-                                    setCopiedAcctNo,
-                                    'Account Number'
-                                  )
-                                }
-                                className="h-7 px-2 rounded border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-900 font-mono font-semibold inline-flex items-center gap-1 cursor-pointer"
-                              >
-                                <span>A/c: {BANAYA_BANK_DETAILS.accountNumber}</span>
-                                {copiedAcctNo ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3 text-slate-500" />}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  void handleCopyValue(
-                                    BANAYA_BANK_DETAILS.ifscCode,
-                                    setCopiedIfsc,
-                                    'IFSC Code'
-                                  )
-                                }
-                                className="h-7 px-2 rounded border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-900 font-mono font-semibold inline-flex items-center gap-1 cursor-pointer"
-                              >
-                                <span>IFSC: {BANAYA_BANK_DETAILS.ifscCode}</span>
-                                {copiedIfsc ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3 text-slate-500" />}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setShowBankLimitsGuide((v) => !v)}
-                                className="h-7 px-2 rounded border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 font-medium inline-flex items-center gap-1 cursor-pointer"
-                              >
-                                <Info className="w-3 h-3" />
-                                <span>UPI Limits</span>
-                              </button>
-                            </div>
-
-                            {showBankLimitsGuide && (
-                              <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
-                                <table className="w-full text-left text-[11px] border-collapse">
-                                  <thead>
-                                    <tr className="bg-slate-50 border-b border-slate-200 text-slate-600">
-                                      <th className="py-2 px-2.5">Bank / Method</th>
-                                      <th className="py-2 px-2.5">UPI Limit</th>
-                                      <th className="py-2 px-2.5">24h Txn Count</th>
-                                      <th className="py-2 px-2.5">NetBanking</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-slate-100">
-                                    {BANK_UPI_LIMITS.map((row) => (
-                                      <tr key={row.bank}>
-                                        <td className="py-1.5 px-2.5 font-medium text-slate-900">{row.bank}</td>
-                                        <td className="py-1.5 px-2.5 text-slate-700 tabular-nums">{row.perTxnAndDailyUpi}</td>
-                                        <td className="py-1.5 px-2.5 text-slate-600">{row.dailyCountCap}</td>
-                                        <td className="py-1.5 px-2.5 font-medium text-emerald-800">{row.netBankingLimit}</td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </form>
-            )}
-          </div>
-        )}
-
-        {/* ==================== STEP 4: RETURNED TO PAGE — PAYMENT VERIFICATION PENDING ==================== */}
-        {step === 'pending' && activeOrderDisplay && (
+        {/* ==================== STEP 3: VERIFIED PAYMENT & ORDER CONFIRMATION RECEIPT ==================== */}
+        {step === 'confirmed' && activeOrderDisplay && (
           <div className="p-4 sm:p-8">
             <div className="max-w-2xl mx-auto space-y-5">
               {/* Status Card Header */}
               <div className="bg-white rounded-xl border border-slate-200 p-5 sm:p-7 text-center space-y-3 shadow-2xs">
-                <div
-                  className={`w-14 h-14 rounded-full mx-auto flex items-center justify-center ${
-                    isPaymentVerified
-                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                      : 'bg-amber-50 text-amber-600 border border-amber-200'
-                  }`}
-                >
-                  {isPaymentVerified ? <BadgeCheck className="w-8 h-8" /> : <Clock className="w-8 h-8" />}
+                <div className="w-14 h-14 rounded-full mx-auto flex items-center justify-center bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  <BadgeCheck className="w-8 h-8" />
                 </div>
 
                 <div className="space-y-1">
-                  <p
-                    className={`text-xs font-semibold uppercase tracking-wider ${
-                      isPaymentVerified ? 'text-emerald-700' : 'text-amber-700'
-                    }`}
-                  >
-                    {isPaymentVerified ? 'Verified by Merchant' : 'Awaiting Merchant Verification'}
+                  <p className="text-xs font-semibold uppercase tracking-wider text-emerald-700">
+                    Verified by Razorpay {gatewayConfig.isTestMode ? '(Test Mode)' : ''}
                   </p>
                   <h3 className="font-heading text-2xl sm:text-3xl font-bold text-slate-950">
-                    {isPaymentVerified ? 'Payment Verified & Order Confirmed' : 'Payment Verification Pending'}
+                    Payment Verified &amp; Order Confirmed
                   </h3>
                   <p className="text-xs sm:text-sm text-slate-600 max-w-lg mx-auto leading-relaxed">
-                    {isPaymentVerified
-                      ? `Your payment of ₹${activeOrderDisplay.totalAmount.toLocaleString('en-IN')} has been verified. Your order is now ${activeOrderDisplay.status}.`
-                      : `Thank you, ${activeOrderDisplay.customerName}. We recorded your order and reference for ₹${activeOrderDisplay.totalAmount.toLocaleString('en-IN')}. Our team is verifying the credit in our Banaya Enterprise account before confirming dispatch.`}
+                    Thank you, {activeOrderDisplay.customerName}. Your payment of ₹
+                    {activeOrderDisplay.totalAmount.toLocaleString('en-IN')} has been verified and your order is{' '}
+                    {activeOrderDisplay.status}.
                   </p>
                 </div>
               </div>
 
-              {/* Submitted Transaction & Order Summary */}
+              {/* Verified Transaction & Order Summary */}
               <div
                 id="payment-verification-summary"
                 className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs"
               >
                 <div className="px-4 sm:px-5 py-3 border-b border-slate-200 flex items-center justify-between text-xs font-semibold text-slate-700 bg-slate-50/70">
                   <span>PAYMENT &amp; ORDER REFERENCE</span>
-                  <span
-                    className={
-                      isPaymentVerified ? 'text-emerald-700 font-semibold' : 'text-amber-700 font-semibold'
-                    }
-                  >
-                    {isPaymentVerified ? `Status: ${activeOrderDisplay.status}` : 'Status: Verification Pending'}
+                  <span className="text-emerald-700 font-semibold">
+                    Status: {activeOrderDisplay.status}
                   </span>
                 </div>
 
@@ -2491,10 +1517,10 @@ export const CheckoutModal: React.FC = () => {
                   </div>
 
                   <div>
-                    <span className="text-slate-500 block mb-0.5">Submitted Transaction / UTR ID</span>
+                    <span className="text-slate-500 block mb-0.5">Razorpay Payment ID</span>
                     <div className="flex items-center gap-2">
                       <strong className="font-mono text-sm text-slate-950">
-                        {activeOrderDisplay.transactionId || activeOrderDisplay.bankRef || 'Submitted'}
+                        {activeOrderDisplay.transactionId || activeOrderDisplay.bankRef || 'Verified'}
                       </strong>
                       {(activeOrderDisplay.transactionId || activeOrderDisplay.bankRef) && (
                         <button
@@ -2503,11 +1529,11 @@ export const CheckoutModal: React.FC = () => {
                             void handleCopyValue(
                               activeOrderDisplay.transactionId || activeOrderDisplay.bankRef || '',
                               setCopiedTxn,
-                              'Transaction ID'
+                              'Payment ID'
                             )
                           }
                           className="p-1 rounded border border-slate-200 text-slate-500 hover:text-slate-800 cursor-pointer"
-                          title="Copy Transaction ID"
+                          title="Copy Payment ID"
                         >
                           {copiedTxn ? (
                             <Check className="w-3 h-3 text-emerald-600" />
@@ -2533,7 +1559,9 @@ export const CheckoutModal: React.FC = () => {
 
                   <div>
                     <span className="text-slate-500 block mb-0.5">Merchant</span>
-                    <span className="text-slate-800 font-medium">Banaya Enterprise ({BANAYA_CONTACT_EMAIL})</span>
+                    <span className="text-slate-800 font-medium">
+                      Banaya Enterprise ({BANAYA_CONTACT_EMAIL})
+                    </span>
                   </div>
 
                   <div>
@@ -2554,7 +1582,11 @@ export const CheckoutModal: React.FC = () => {
                         Admin Receipt &amp; Alert Dispatched
                       </div>
                       <p className="text-[11px] text-slate-600 leading-relaxed">
-                        Receipt <span className="font-mono">{activeOrderDisplay.receiptNumber || formatReceiptNumber(activeOrderDisplay.id)}</span> &amp; UTR alerted immediately to Banaya Admin Desk ({BANAYA_CONTACT_EMAIL}).
+                        Receipt{' '}
+                        <span className="font-mono">
+                          {activeOrderDisplay.receiptNumber || formatReceiptNumber(activeOrderDisplay.id)}
+                        </span>{' '}
+                        recorded in Banaya Admin Desk ({BANAYA_CONTACT_EMAIL}).
                       </p>
                     </div>
                   </div>
@@ -2562,12 +1594,11 @@ export const CheckoutModal: React.FC = () => {
                     <FileText className="w-4 h-4 text-[#064E3B] shrink-0 mt-0.5" />
                     <div>
                       <div className="font-semibold text-slate-900">
-                        {isPaymentVerified ? 'Confirmed Order Sent to Customer' : 'Customer Receipt & Live Sync Ready'}
+                        Confirmed Order Saved
                       </div>
                       <p className="text-[11px] text-slate-600 leading-relaxed">
-                        {isPaymentVerified
-                          ? `Verified confirmation & tracking (${activeOrderDisplay.trackingNumber}) delivered for ${activeOrderDisplay.email || activeOrderDisplay.phone}.`
-                          : `Receipt recorded${activeOrderDisplay.email ? ` for ${activeOrderDisplay.email}` : ''}. Live order confirmation updates automatically once verified.`}
+                        Verified confirmation &amp; tracking ({activeOrderDisplay.trackingNumber}) saved for{' '}
+                        {activeOrderDisplay.email || activeOrderDisplay.phone}.
                       </p>
                     </div>
                   </div>
@@ -2576,7 +1607,9 @@ export const CheckoutModal: React.FC = () => {
                 {/* Compact Itemized Receipt Summary */}
                 <div className="px-4 sm:px-5 py-3.5 border-t border-slate-200 bg-white space-y-2 text-xs">
                   <div className="font-semibold text-slate-800 flex items-center justify-between">
-                    <span>Order Receipt Items ({activeOrderDisplay.items.reduce((s, it) => s + it.quantity, 0)})</span>
+                    <span>
+                      Order Receipt Items ({activeOrderDisplay.items.reduce((s, it) => s + it.quantity, 0)})
+                    </span>
                     <span className="font-mono text-[11px] text-slate-500">
                       {activeOrderDisplay.date}
                     </span>
@@ -2605,47 +1638,25 @@ export const CheckoutModal: React.FC = () => {
                     <div className="p-3 rounded-lg bg-white border border-emerald-200 flex items-start gap-2.5">
                       <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
                       <div>
-                        <div className="font-semibold text-slate-900">1. Receipt &amp; Alert Sent</div>
-                        <div className="text-[11px] text-slate-500">Order &amp; UTR alerted to admin</div>
+                        <div className="font-semibold text-slate-900">1. Payment Authorized</div>
+                        <div className="text-[11px] text-slate-500">Razorpay transaction completed</div>
                       </div>
                     </div>
 
-                    <div
-                      className={`p-3 rounded-lg bg-white border flex items-start gap-2.5 ${
-                        isPaymentVerified ? 'border-emerald-200' : 'border-amber-300'
-                      }`}
-                    >
-                      {isPaymentVerified ? (
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                      ) : (
-                        <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                      )}
+                    <div className="p-3 rounded-lg bg-white border border-emerald-200 flex items-start gap-2.5">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
                       <div>
-                        <div className="font-semibold text-slate-900">
-                          {isPaymentVerified ? '2. Payment Verified' : '2. Merchant Verification'}
-                        </div>
-                        <div className="text-[11px] text-slate-500">
-                          {isPaymentVerified ? 'Confirmed by Banaya desk' : 'Pending bank reconciliation'}
-                        </div>
+                        <div className="font-semibold text-slate-900">2. Signature Verified</div>
+                        <div className="text-[11px] text-slate-500">Verified securely by server</div>
                       </div>
                     </div>
 
-                    <div
-                      className={`p-3 rounded-lg bg-white border flex items-start gap-2.5 ${
-                        isPaymentVerified ? 'border-emerald-200' : 'border-slate-200'
-                      }`}
-                    >
-                      <Truck
-                        className={`w-4 h-4 shrink-0 mt-0.5 ${
-                          isPaymentVerified ? 'text-emerald-600' : 'text-slate-400'
-                        }`}
-                      />
+                    <div className="p-3 rounded-lg bg-white border border-emerald-200 flex items-start gap-2.5">
+                      <Truck className="w-4 h-4 shrink-0 mt-0.5 text-emerald-600" />
                       <div>
-                        <div className="font-semibold text-slate-900">3. Order Confirmation</div>
+                        <div className="font-semibold text-slate-900">3. Order Confirmed</div>
                         <div className="text-[11px] text-slate-500">
-                          {isPaymentVerified
-                            ? `Tracking: ${activeOrderDisplay.trackingNumber}`
-                            : 'Starts after verification'}
+                          Tracking: {activeOrderDisplay.trackingNumber}
                         </div>
                       </div>
                     </div>
@@ -2657,7 +1668,7 @@ export const CheckoutModal: React.FC = () => {
               <div className="flex flex-col sm:flex-row gap-2.5">
                 <button
                   type="button"
-                  onClick={() => downloadOrderReceipt(activeOrderDisplay, isPaymentVerified)}
+                  onClick={() => downloadOrderReceipt(activeOrderDisplay, true)}
                   className="h-11 px-4 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs sm:text-sm font-semibold flex items-center justify-center gap-2 cursor-pointer transition-colors"
                 >
                   <Download className="w-4 h-4" />

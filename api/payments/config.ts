@@ -29,10 +29,13 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
   const keyId = sanitizeEnvSecret(process.env.RAZORPAY_KEY_ID);
   const keySecret = sanitizeEnvSecret(process.env.RAZORPAY_KEY_SECRET);
   const enabled = Boolean(keyId && keySecret && keyId !== 'MY_RAZORPAY_KEY_ID');
+  const isTestMode = enabled && keyId.startsWith('rzp_test_');
+  const mode = !enabled ? 'unconfigured' : isTestMode ? 'test' : 'live';
 
   res.status(200).json({
     razorpayEnabled: enabled,
     keyId: enabled ? keyId : null,
-    mode: enabled ? 'razorpay' : 'direct'
+    isTestMode,
+    mode
   });
 }

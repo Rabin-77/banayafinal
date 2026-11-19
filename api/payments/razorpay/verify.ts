@@ -22,7 +22,22 @@ function sanitizeEnvSecret(raw?: string): string {
   return trimmed;
 }
 
-export default function handler(req: VercelRequest, res: VercelResponse) {
+async function readJsonBody(req: VercelRequest): Promise<Record<string, unknown>> {
+  if (req.body && typeof req.body === 'object') {
+    return req.body as Record<string, unknown>;
+  }
+  if (typeof req.body === 'string' && req.body.trim()) {
+    return JSON.parse(req.body) as Record<string, unknown>;
+  }
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+  }
+  const raw = Buffer.concat(chunks).toString('utf8').trim();
+  return raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+}
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });
     return;
@@ -32,11 +47,11 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
     const keyId = sanitizeEnvSecret(process.env.RAZORPAY_KEY_ID);
     const keySecret = sanitizeEnvSecret(process.env.RAZORPAY_KEY_SECRET);
     if (!keyId || !keySecret || keyId === 'MY_RAZORPAY_KEY_ID') {
-      res.status(503).json({ verified: false, error: 'Gateway keys not configured' });
+      res.status(503).json({ verified: false, error: 'Razorpay API keys not configured on server' });
       return;
     }
 
-    const rawBody = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
+    const rawBody = await readJsonBody(req);
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = rawBody as {
       razorpay_order_id?: string;
       razorpay_payment_id?: string;
