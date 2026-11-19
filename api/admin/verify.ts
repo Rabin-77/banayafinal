@@ -12,6 +12,8 @@ interface VercelResponse extends ServerResponse {
 }
 
 const DEFAULT_ADMIN_PASSKEY_SHA256 =
+  'd34b84e8afda277e0909a7e8b93d80335d1a7b6bbedc6ddfc0166fe6bc5bfcd2';
+const REVOKED_LEGACY_PASSKEY_SHA256 =
   'c8c3ffefa5f6d97e06f87db28be0745ad1e960da5bfa78c8430a8e4a4b670113';
 
 function sanitizeEnvSecret(raw?: string): string {
@@ -49,7 +51,11 @@ function isValidAdminPasskey(candidate: string): boolean {
   if (!trimmed) return false;
 
   const envPasskey = sanitizeEnvSecret(process.env.ADMIN_PASSKEY);
-  const expectedHash = envPasskey ? sha256Hex(envPasskey) : DEFAULT_ADMIN_PASSKEY_SHA256;
+  const envPasskeyHash = envPasskey ? sha256Hex(envPasskey) : '';
+  const expectedHash =
+    envPasskeyHash && envPasskeyHash !== REVOKED_LEGACY_PASSKEY_SHA256
+      ? envPasskeyHash
+      : DEFAULT_ADMIN_PASSKEY_SHA256;
 
   const candidateBuf = Buffer.from(sha256Hex(trimmed), 'utf8');
   const expectedBuf = Buffer.from(expectedHash, 'utf8');

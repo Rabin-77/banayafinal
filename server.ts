@@ -103,6 +103,8 @@ const ROOT_DIR = process.cwd();
 const DIST_DIR = path.join(ROOT_DIR, 'dist');
 const DEFAULT_PRODUCTS_PATH = path.join(ROOT_DIR, 'src', 'data', 'products.json');
 const DEFAULT_ADMIN_PASSKEY_SHA256 =
+  'd34b84e8afda277e0909a7e8b93d80335d1a7b6bbedc6ddfc0166fe6bc5bfcd2';
+const REVOKED_LEGACY_PASSKEY_SHA256 =
   'c8c3ffefa5f6d97e06f87db28be0745ad1e960da5bfa78c8430a8e4a4b670113';
 const ADMIN_ALERT_EMAIL = process.env.ADMIN_ALERT_EMAIL || 'banayaenterprise100@gmail.com';
 
@@ -449,9 +451,13 @@ function isValidAdminPasskey(candidate: string): boolean {
   const trimmed = candidate.trim();
   if (!trimmed) return false;
   const envPasskey = sanitizeEnvSecret(process.env.ADMIN_PASSKEY);
-  const expectedHash = envPasskey
+  const envPasskeyHash = envPasskey
     ? crypto.createHash('sha256').update(envPasskey, 'utf8').digest('hex')
-    : DEFAULT_ADMIN_PASSKEY_SHA256;
+    : '';
+  const expectedHash =
+    envPasskeyHash && envPasskeyHash !== REVOKED_LEGACY_PASSKEY_SHA256
+      ? envPasskeyHash
+      : DEFAULT_ADMIN_PASSKEY_SHA256;
   const candidateBuf = Buffer.from(
     crypto.createHash('sha256').update(trimmed, 'utf8').digest('hex'),
     'utf8'
