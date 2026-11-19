@@ -6,6 +6,13 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   sendEmailVerification,
+  sendPasswordResetEmail,
+  updatePassword,
+  verifyBeforeUpdateEmail,
+  EmailAuthProvider,
+  reauthenticateWithCredential,
+  reauthenticateWithPopup,
+  linkWithCredential,
   signOut
 } from 'firebase/auth';
 import {
@@ -34,7 +41,7 @@ import { Product, CartItem, Order, ActiveModal, MediaFolder, MediaFolderImage, A
 import { PRODUCTS } from '../data/products';
 import { DEFAULT_MEDIA_FOLDERS } from '../data/defaultMediaFolders';
 import { getPriceForProductWeight } from '../utils/pricing';
-import { clearAdminSession } from '../utils/adminAuth';
+import { setAdminSessionPasskey, getAdminSessionPasskey, hasAdminSession, clearAdminSession } from '../utils/adminAuth';
 import { healLegacyProductImages } from '../utils/imageFallback';
 import { sortCatalogByCanonicalOrder } from '../utils/catalogOrder';
 import { MAX_PRODUCT_GALLERY_BYTES, calculateGalleryByteSize, optimizeImageToDataUrl } from '../utils/imageUpload';
@@ -67,17 +74,23 @@ interface ShopContextType {
   serverSynced: boolean;
   lastSyncedAt: number | null;
 
-  // Firebase Admin Authentication
+  // Admin Authentication (Setup Key + Optional Cloud Sync)
   authReady: boolean;
   firebaseUser: User | null;
   isCloudAdmin: boolean;
+  isPasskeyAdmin: boolean;
+  passkeyAuthChecking: boolean;
   adminAuthError: string | null;
   unauthorizedDomain: string | null;
   emailPasswordProviderDisabled: boolean;
   pendingVerificationEmail: string | null;
   canAttemptFirstTimeSetup: boolean;
+  unlockWithSetupKey: (setupKey: string) => Promise<boolean>;
   signInWithEmailAdmin: (email: string, password: string) => Promise<boolean>;
   registerFirstAdminAccount: (email: string, password: string) => Promise<boolean>;
+  sendAdminPasswordReset: (email: string) => Promise<boolean>;
+  updateAdminPassword: (currentPassword: string, newPassword: string) => Promise<boolean>;
+  updateAdminEmailAddress: (currentPassword: string, newEmail: string) => Promise<boolean>;
   resendAdminVerificationEmail: () => Promise<boolean>;
   refreshAdminVerificationStatus: () => Promise<boolean>;
   signInWithGoogleAdmin: () => Promise<boolean>;
@@ -355,10 +368,12 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [serverSynced, setServerSynced] = useState<boolean>(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
 
-  // Firebase Auth & Admin State
+  // Auth & Admin State (Setup Key + Optional Firebase Cloud Sync)
   const [authReady, setAuthReady] = useState<boolean>(false);
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [isCloudAdmin, setIsCloudAdmin] = useState<boolean>(false);
+  const [isPasskeyAdmin, setIsPasskeyAdmin] = useState<boolean>(false);
+  const [passkeyAuthChecking, setPasskeyAuthChecking] = useState<boolean>(() => hasAdminSession());
   const [adminAuthError, setAdminAuthError] = useState<string | null>(null);
   const [unauthorizedDomain, setUnauthorizedDomain] = useState<string | null>(null);
   const [emailPasswordProviderDisabled, setEmailPasswordProviderDisabled] = useState<boolean>(false);
@@ -451,6 +466,93 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
+  // Verify persisted Setup Key on startup via server endpoint
+  useEffect(() => {
+    if (!hasAdminSession()) {
+      setPasskeyAuthChecking(false);
+      return;
+    }
+    const storedKey = getAdminSessionPasskey();
+    if (!storedKey) {
+      clearAdminSession();
+      setPasskeyAuthChecking(false);
+      return;
+    }
+
+    let cancelled = false;
+    void fetch('/api/admin/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ passkey: storedKey })
+    })
+      .then(async (res) => {
+        if (cancelled) return;
+        if (res.ok) {
+          const data = (await res.json().catch(() => null)) as { ok?: boolean } | null;
+          if (data?.ok) {
+            setIsPasskeyAdmin(true);
+            return;
+          }
+        }
+        clearAdminSession();
+        setIsPasskeyAdmin(false);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          clearAdminSession();
+          setIsPasskeyAdmin(false);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setPasskeyAuthChecking(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const unlockWithSetupKey = useCallback(
+    async (setupKeyInput: string): Promise<boolean> => {
+      const trimmed = setupKeyInput.trim();
+      setAdminAuthError(null);
+      setUnauthorizedDomain(null);
+
+      if (!trimmed) {
+        setAdminAuthError('Please enter your Administrator Setup Key.');
+        return false;
+      }
+
+      try {
+        const res = await fetch('/api/admin/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ passkey: trimmed })
+        });
+        const data = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+
+        if (res.ok && data?.ok) {
+          setAdminSessionPasskey(trimmed);
+          setIsPasskeyAdmin(true);
+          setAdminAuthError(null);
+          showToast('Admin Portal Unlocked', 'Welcome back to Banaya Enterprises Admin.', 'success');
+          return true;
+        }
+
+        clearAdminSession();
+        setIsPasskeyAdmin(false);
+        setAdminAuthError(data?.error || 'Invalid administrator setup key. Access denied.');
+        return false;
+      } catch {
+        setAdminAuthError('Unable to verify setup key right now. Please try again.');
+        return false;
+      }
+    },
+    [showToast]
+  );
+
   // Monitor Firebase Auth State
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -508,10 +610,8 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setEmailPasswordProviderDisabled(false);
       setCanAttemptFirstTimeSetup(false);
 
-      if (!isAllowedAdminEmailString(cleanEmail)) {
-        setAdminAuthError(
-          `Access denied. Only authorized admin emails (${ADMIN_EMAILS.join(', ')}) can open the Admin Portal.`
-        );
+      if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+        setAdminAuthError('Please enter a valid admin email address.');
         return false;
       }
 
@@ -523,17 +623,33 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const cred = await signInWithEmailAndPassword(auth, cleanEmail, passwordInput);
         const user = cred.user;
-        if (user.emailVerified) {
+
+        let isAllowed = isVerifiedAdminEmail(user);
+        if (!isAllowed && user.emailVerified) {
+          const adminDoc = await getDoc(doc(db, 'admins', user.uid));
+          isAllowed = adminDoc.exists();
+        }
+
+        if (isAllowed) {
           setIsCloudAdmin(true);
           setPendingVerificationEmail(null);
           showToast('Admin Signed In', `Welcome back (${cleanEmail}). Live store sync active.`, 'success');
           return true;
         }
 
+        if (!user.emailVerified && isAllowedAdminEmailString(cleanEmail)) {
+          setIsCloudAdmin(false);
+          setPendingVerificationEmail(user.email || cleanEmail);
+          setAdminAuthError(
+            `Signed in, but ${cleanEmail} still needs a one-time email verification link to unlock live database publishing.`
+          );
+          return false;
+        }
+
+        await signOut(auth);
         setIsCloudAdmin(false);
-        setPendingVerificationEmail(user.email || cleanEmail);
         setAdminAuthError(
-          `Signed in, but ${cleanEmail} still needs a one-time email verification link to unlock live database publishing.`
+          `Access denied for ${cleanEmail}. Only authorized store admin accounts can open the Admin Portal.`
         );
         return false;
       } catch (error: unknown) {
@@ -548,9 +664,11 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
           errCode === 'auth/invalid-credential' ||
           errCode === 'auth/wrong-password'
         ) {
-          setCanAttemptFirstTimeSetup(true);
+          if (isAllowedAdminEmailString(cleanEmail)) {
+            setCanAttemptFirstTimeSetup(true);
+          }
           setAdminAuthError(
-            'Email or password was not matched in Firebase Auth. Check your password, or initialize the admin account below if signing in for the first time.'
+            'Email or password did not match Firebase Auth. Check your password, click "Send Password Reset Email", or initialize the account if signing in for the first time.'
           );
         } else if (errCode === 'auth/too-many-requests') {
           setAdminAuthError('Too many failed attempts. Please wait a moment and try again.');
@@ -693,19 +811,213 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [showToast]);
 
   const signOutAdmin = useCallback(async (): Promise<void> => {
+    clearAdminSession();
+    setIsPasskeyAdmin(false);
+    setIsCloudAdmin(false);
+    setAdminAuthError(null);
+    setUnauthorizedDomain(null);
+    setEmailPasswordProviderDisabled(false);
+    setPendingVerificationEmail(null);
+    setCanAttemptFirstTimeSetup(false);
     try {
       await signOut(auth);
-    } finally {
-      clearAdminSession();
-      setIsCloudAdmin(false);
-      setAdminAuthError(null);
-      setUnauthorizedDomain(null);
-      setEmailPasswordProviderDisabled(false);
-      setPendingVerificationEmail(null);
-      setCanAttemptFirstTimeSetup(false);
-      showToast('Signed Out', 'Admin session closed securely.', 'info');
+    } catch {
+      // Ignore if signed in only with setup key
     }
+    showToast('Portal Locked', 'Admin session locked securely.', 'info');
   }, [showToast]);
+
+  const sendAdminPasswordReset = useCallback(
+    async (emailInput: string): Promise<boolean> => {
+      const cleanEmail = emailInput.trim().toLowerCase();
+      setAdminAuthError(null);
+      if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+        setAdminAuthError('Enter your admin email address first to receive a password reset link.');
+        return false;
+      }
+      try {
+        await sendPasswordResetEmail(auth, cleanEmail);
+        showToast(
+          'Password Reset Email Sent',
+          `Open ${cleanEmail} inbox and click the Firebase link to set your new password.`,
+          'success'
+        );
+        return true;
+      } catch (error: unknown) {
+        const errCode = (error as { code?: string })?.code || '';
+        if (errCode === 'auth/user-not-found') {
+          setAdminAuthError(
+            `No password login exists yet for ${cleanEmail}. Sign in with Google first (then set a password in Admin Mail & Password), or use "Create Login" below.`
+          );
+          if (isAllowedAdminEmailString(cleanEmail)) {
+            setCanAttemptFirstTimeSetup(true);
+          }
+        } else {
+          setAdminAuthError((error as Error)?.message || 'Could not send password reset email.');
+        }
+        return false;
+      }
+    },
+    [showToast]
+  );
+
+  const updateAdminPassword = useCallback(
+    async (currentPasswordInput: string, newPasswordInput: string): Promise<boolean> => {
+      const user = auth.currentUser;
+      if (!user || !user.email) {
+        showToast('Sign-In Required', 'Please sign in to the Admin Portal first.', 'warning');
+        return false;
+      }
+
+      if (!newPasswordInput || newPasswordInput.length < 6) {
+        showToast('Password Too Short', 'New password must be at least 6 characters.', 'warning');
+        return false;
+      }
+
+      const hasPasswordProvider = user.providerData.some((p) => p.providerId === 'password');
+
+      try {
+        if (!hasPasswordProvider) {
+          const cred = EmailAuthProvider.credential(user.email, newPasswordInput);
+          try {
+            await linkWithCredential(user, cred);
+          } catch (linkErr: unknown) {
+            const linkCode = (linkErr as { code?: string })?.code || '';
+            if (linkCode === 'auth/requires-recent-login') {
+              await reauthenticateWithPopup(user, googleProvider);
+              await linkWithCredential(user, cred);
+            } else {
+              throw linkErr;
+            }
+          }
+          await user.reload();
+          setFirebaseUser(auth.currentUser);
+          showToast(
+            'Admin Password Set',
+            `You can now sign in with ${user.email} and your new password.`,
+            'success'
+          );
+          return true;
+        }
+
+        if (currentPasswordInput) {
+          const cred = EmailAuthProvider.credential(user.email, currentPasswordInput);
+          await reauthenticateWithCredential(user, cred);
+        }
+
+        try {
+          await updatePassword(user, newPasswordInput);
+        } catch (updErr: unknown) {
+          const updCode = (updErr as { code?: string })?.code || '';
+          if (updCode === 'auth/requires-recent-login' && !currentPasswordInput) {
+            if (user.providerData.some((p) => p.providerId === 'google.com')) {
+              await reauthenticateWithPopup(user, googleProvider);
+              await updatePassword(user, newPasswordInput);
+            } else {
+              throw new Error('Please enter your Current Password above to confirm this password change.');
+            }
+          } else {
+            throw updErr;
+          }
+        }
+
+        showToast('Password Updated', `Admin password updated for ${user.email}.`, 'success');
+        return true;
+      } catch (error: unknown) {
+        const errCode = (error as { code?: string })?.code || '';
+        if (errCode === 'auth/operation-not-allowed') {
+          setEmailPasswordProviderDisabled(true);
+          showToast(
+            'Enable Email/Password in Firebase',
+            'Enable Email/Password provider once in Firebase Console -> Authentication -> Sign-in method.',
+            'warning'
+          );
+        } else if (errCode === 'auth/wrong-password' || errCode === 'auth/invalid-credential') {
+          showToast(
+            'Current Password Mismatch',
+            'Current password did not match. Leave it blank if re-authenticating via Google, or use Reset Password.',
+            'warning'
+          );
+        } else {
+          showToast('Password Update Failed', (error as Error)?.message || 'Unable to update password.', 'warning');
+        }
+        return false;
+      }
+    },
+    [showToast]
+  );
+
+  const updateAdminEmailAddress = useCallback(
+    async (currentPasswordInput: string, newEmailInput: string): Promise<boolean> => {
+      const user = auth.currentUser;
+      if (!user || !user.email) {
+        showToast('Sign-In Required', 'Please sign in to the Admin Portal first.', 'warning');
+        return false;
+      }
+
+      const cleanNewEmail = clampString(newEmailInput.trim().toLowerCase(), 160);
+      if (!cleanNewEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanNewEmail)) {
+        showToast('Invalid Email', 'Please enter a valid admin email address.', 'warning');
+        return false;
+      }
+
+      if (cleanNewEmail === user.email.toLowerCase()) {
+        showToast('Same Email', `Your admin account already uses ${cleanNewEmail}.`, 'info');
+        return true;
+      }
+
+      try {
+        if (currentPasswordInput && user.providerData.some((p) => p.providerId === 'password')) {
+          const cred = EmailAuthProvider.credential(user.email, currentPasswordInput);
+          await reauthenticateWithCredential(user, cred);
+        }
+
+        // Preserve admin authorization for this UID in Firestore admins/{uid} before switching email
+        const adminRef = doc(db, 'admins', user.uid);
+        const adminSnap = await getDoc(adminRef);
+        if (adminSnap.exists()) {
+          await updateDoc(adminRef, { email: cleanNewEmail });
+        } else {
+          await setDoc(adminRef, {
+            uid: user.uid,
+            email: cleanNewEmail,
+            createdAt: serverTimestamp()
+          });
+        }
+
+        try {
+          await verifyBeforeUpdateEmail(user, cleanNewEmail);
+        } catch (emailErr: unknown) {
+          const emailCode = (emailErr as { code?: string })?.code || '';
+          if (emailCode === 'auth/requires-recent-login') {
+            if (user.providerData.some((p) => p.providerId === 'google.com')) {
+              await reauthenticateWithPopup(user, googleProvider);
+              await verifyBeforeUpdateEmail(user, cleanNewEmail);
+            } else {
+              throw new Error('Please enter your Current Password first to confirm changing your Admin Mail ID.');
+            }
+          } else {
+            throw emailErr;
+          }
+        }
+
+        showToast(
+          'Verification Link Sent',
+          `Open ${cleanNewEmail} inbox and click the confirmation link to switch your Admin Mail ID.`,
+          'success'
+        );
+        return true;
+      } catch (error: unknown) {
+        showToast(
+          'Mail ID Update Failed',
+          (error as Error)?.message || 'Unable to update admin email address.',
+          'warning'
+        );
+        return false;
+      }
+    },
+    [showToast]
+  );
 
   const clearAdminAuthError = useCallback(() => {
     setAdminAuthError(null);
@@ -1071,6 +1383,54 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       imageListeners.clear();
     };
   }, [authReady, isCloudAdmin, showToast]);
+
+  // 2b. Hydrate orders, folders & notes from Express /api/store when unlocked via Setup Key without Cloud Sync
+  useEffect(() => {
+    if (!isPasskeyAdmin || isCloudAdmin) return;
+    let cancelled = false;
+
+    void fetch('/api/store')
+      .then((res) => {
+        const ct = res.headers.get('content-type') || '';
+        if (!res.ok || !ct.includes('application/json')) return null;
+        return res.json();
+      })
+      .then(
+        (
+          data: {
+            products?: Product[];
+            orders?: Order[];
+            adminNotes?: Record<string, string>;
+            mediaFolders?: MediaFolder[];
+            updatedAt?: number;
+          } | null
+        ) => {
+          if (cancelled || !data) return;
+          if (Array.isArray(data.orders)) {
+            setOrders(data.orders);
+          }
+          if (data.adminNotes && typeof data.adminNotes === 'object') {
+            setAdminNotes(data.adminNotes);
+          }
+          if (Array.isArray(data.mediaFolders)) {
+            setMediaFolders(data.mediaFolders);
+          }
+          if (Array.isArray(data.products) && data.products.length > 0 && !serverSynced) {
+            setProducts(sortCatalogByCanonicalOrder(data.products.map(healLegacyProductImages)));
+          }
+          if (typeof data.updatedAt === 'number') {
+            setLastSyncedAt(data.updatedAt);
+          }
+        }
+      )
+      .catch(() => {
+        // Static Vercel deployment relies on Firestore when Cloud Sync is connected
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isPasskeyAdmin, isCloudAdmin, serverSynced]);
 
   // Local cache fallback (never throws if quota reached)
   useEffect(() => {
@@ -1438,13 +1798,14 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const saveProductToFirestore = async (product: Product, isNewCreate: boolean): Promise<boolean> => {
     const uid = auth.currentUser?.uid;
-    if (!uid || !isCloudAdmin) {
-      showToast('Admin Sign-In Required', 'Please sign in with Google in the Admin Portal to publish live changes.', 'warning');
+    const passkey = getAdminSessionPasskey();
+    if ((!uid || !isCloudAdmin) && !isPasskeyAdmin) {
+      showToast('Admin Unlock Required', 'Please unlock the Admin Portal with your Setup Key first.', 'warning');
       return false;
     }
 
     const healed = healLegacyProductImages(product);
-    const fields = buildProductFirestoreFields(healed, uid);
+    const fields = buildProductFirestoreFields(healed, uid || 'setup-key-admin');
 
     if (calculateGalleryByteSize(fields.gallery) > MAX_PRODUCT_GALLERY_BYTES) {
       showToast(
@@ -1469,6 +1830,62 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setProducts(nextProducts);
     broadcastChannelRef.current?.postMessage({ products: nextProducts, updatedAt: Date.now() });
 
+    if (!uid || !isCloudAdmin) {
+      try {
+        const res = await fetch(
+          isNewCreate ? '/api/products' : `/api/products/${encodeURIComponent(fields.id)}`,
+          {
+            method: isNewCreate ? 'POST' : 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-admin-passkey': passkey
+            },
+            body: JSON.stringify(optimisticProduct)
+          }
+        );
+        if (res.status === 401) {
+          clearAdminSession();
+          setIsPasskeyAdmin(false);
+          setProducts(prevProducts);
+          showToast('Session Expired', 'Please re-enter your Administrator Setup Key.', 'warning');
+          return false;
+        }
+        const ct = res.headers.get('content-type') || '';
+        if (!res.ok || !ct.includes('application/json')) {
+          setProducts(prevProducts);
+          showToast(
+            'Cloud Sync Required',
+            'Click "Connect Cloud Sync" in the Admin sidebar to publish edits live to all visitor devices.',
+            'warning'
+          );
+          return false;
+        }
+        const data = (await res.json()) as { products?: Product[]; updatedAt?: number };
+        if (Array.isArray(data.products) && data.products.length > 0) {
+          const healedCatalog = sortCatalogByCanonicalOrder(data.products.map(healLegacyProductImages));
+          setProducts(healedCatalog);
+          broadcastChannelRef.current?.postMessage({ products: healedCatalog, updatedAt: Date.now() });
+        }
+        setServerSynced(true);
+        setLastSyncedAt(data.updatedAt || Date.now());
+        showToast(
+          isNewCreate ? 'Product Published Live' : 'Website Updated',
+          `${fields.name} (₹${fields.price}) saved successfully.`,
+          'success',
+          fields.image
+        );
+        return true;
+      } catch {
+        setProducts(prevProducts);
+        showToast(
+          'Cloud Sync Required',
+          'Click "Connect Cloud Sync" in the Admin sidebar to save edits to the live database.',
+          'warning'
+        );
+        return false;
+      }
+    }
+
     const docRef = doc(db, 'products', fields.id);
     const docPath = `products/${fields.id}`;
 
@@ -1488,6 +1905,14 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
       }
 
+      if (passkey) {
+        void fetch(isNewCreate ? '/api/products' : `/api/products/${encodeURIComponent(fields.id)}`, {
+          method: isNewCreate ? 'POST' : 'PUT',
+          headers: { 'Content-Type': 'application/json', 'x-admin-passkey': passkey },
+          body: JSON.stringify(optimisticProduct)
+        }).catch(() => {});
+      }
+
       setServerSynced(true);
       setLastSyncedAt(Date.now());
       showToast(
@@ -1502,7 +1927,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       showToast(
         'Publish Failed',
         error instanceof Error && error.message.includes('Missing or insufficient permissions')
-          ? 'Please sign in with the authorized Google admin account to publish changes.'
+          ? 'Please connect Google Cloud Sync to publish changes to Firestore.'
           : 'Could not save changes to the cloud database. Please try again.',
         'warning'
       );
@@ -1531,8 +1956,10 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const deleteProduct = async (productId: string): Promise<boolean> => {
-    if (!auth.currentUser?.uid || !isCloudAdmin) {
-      showToast('Admin Sign-In Required', 'Please sign in as admin to delete products.', 'warning');
+    const uid = auth.currentUser?.uid;
+    const passkey = getAdminSessionPasskey();
+    if ((!uid || !isCloudAdmin) && !isPasskeyAdmin) {
+      showToast('Admin Unlock Required', 'Please unlock the Admin Portal with your Setup Key.', 'warning');
       return false;
     }
     const prod = products.find((p) => p.id === productId);
@@ -1541,8 +1968,39 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const nextProducts = prevProducts.filter((p) => p.id !== cleanId);
     setProducts(nextProducts);
 
+    if (!uid || !isCloudAdmin) {
+      try {
+        const res = await fetch(`/api/products/${encodeURIComponent(cleanId)}`, {
+          method: 'DELETE',
+          headers: { 'x-admin-passkey': passkey }
+        });
+        if (!res.ok) {
+          setProducts(prevProducts);
+          showToast(
+            'Cloud Sync Required',
+            'Click "Connect Cloud Sync" in the Admin sidebar to delete products from the live database.',
+            'warning'
+          );
+          return false;
+        }
+        broadcastChannelRef.current?.postMessage({ products: nextProducts, updatedAt: Date.now() });
+        showToast('Removed from Website', `${prod?.name || 'Product'} removed from catalog.`, 'info');
+        return true;
+      } catch {
+        setProducts(prevProducts);
+        showToast('Delete Failed', 'Could not delete product right now.', 'warning');
+        return false;
+      }
+    }
+
     try {
       await deleteDoc(doc(db, 'products', cleanId));
+      if (passkey) {
+        void fetch(`/api/products/${encodeURIComponent(cleanId)}`, {
+          method: 'DELETE',
+          headers: { 'x-admin-passkey': passkey }
+        }).catch(() => {});
+      }
       broadcastChannelRef.current?.postMessage({ products: nextProducts, updatedAt: Date.now() });
       showToast('Removed from Live Website', `${prod?.name || 'Product'} removed from live catalog.`, 'info');
       return true;
@@ -1553,14 +2011,15 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Media Folders Management (Firestore Subcollection)
+  // Media Folders Management (Firestore Subcollection + Server API fallback)
   const createMediaFolder = async (name: string): Promise<MediaFolder | null> => {
     const cleanName = clampString(name, 120);
     if (!cleanName) return null;
 
     const uid = auth.currentUser?.uid;
-    if (!uid || !isCloudAdmin) {
-      showToast('Admin Sign-In Required', 'Please sign in with Google to create image folders.', 'warning');
+    const passkey = getAdminSessionPasskey();
+    if ((!uid || !isCloudAdmin) && !isPasskeyAdmin) {
+      showToast('Admin Unlock Required', 'Please unlock the Admin Portal with your Setup Key.', 'warning');
       return null;
     }
 
@@ -1568,6 +2027,36 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (existing) {
       showToast('Folder Ready', `Using existing folder "${existing.name}".`, 'info');
       return existing;
+    }
+
+    if (!uid || !isCloudAdmin) {
+      try {
+        const res = await fetch('/api/media/folders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-admin-passkey': passkey },
+          body: JSON.stringify({ name: cleanName })
+        });
+        const ct = res.headers.get('content-type') || '';
+        if (!res.ok || !ct.includes('application/json')) {
+          showToast(
+            'Cloud Sync Required',
+            'Click "Connect Cloud Sync" in the Admin sidebar to save image folders to Firebase.',
+            'warning'
+          );
+          return null;
+        }
+        const data = (await res.json()) as { folder?: MediaFolder; mediaFolders?: MediaFolder[] };
+        if (Array.isArray(data.mediaFolders)) {
+          setMediaFolders(data.mediaFolders);
+        } else if (data.folder) {
+          setMediaFolders((prev) => [data.folder!, ...prev]);
+        }
+        showToast('Folder Created', `"${cleanName}" saved to your image library.`, 'success');
+        return data.folder || null;
+      } catch {
+        showToast('Folder Error', 'Could not create folder.', 'warning');
+        return null;
+      }
     }
 
     const folderId = sanitizeFirestoreId(`folder-${cleanName.toLowerCase()}-${Date.now().toString(36)}`, 'folder');
@@ -1596,14 +2085,35 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const deleteMediaFolder = async (folderId: string): Promise<boolean> => {
-    if (!auth.currentUser?.uid || !isCloudAdmin) {
-      showToast('Admin Sign-In Required', 'Please sign in to delete folders.', 'warning');
+    const uid = auth.currentUser?.uid;
+    const passkey = getAdminSessionPasskey();
+    if ((!uid || !isCloudAdmin) && !isPasskeyAdmin) {
+      showToast('Admin Unlock Required', 'Please unlock the Admin Portal to delete folders.', 'warning');
       return false;
     }
     const cleanFolderId = sanitizeFirestoreId(folderId, 'folder');
     const target = mediaFolders.find((f) => f.id === cleanFolderId);
     const prevFolders = mediaFolders;
     setMediaFolders((prev) => prev.filter((f) => f.id !== cleanFolderId));
+
+    if (!uid || !isCloudAdmin) {
+      try {
+        const res = await fetch(`/api/media/folders/${encodeURIComponent(folderId)}`, {
+          method: 'DELETE',
+          headers: { 'x-admin-passkey': passkey }
+        });
+        if (!res.ok) {
+          setMediaFolders(prevFolders);
+          showToast('Cloud Sync Required', 'Click "Connect Cloud Sync" to delete folders in cloud storage.', 'warning');
+          return false;
+        }
+        showToast('Folder Deleted', `"${target?.name || 'Folder'}" deleted permanently.`, 'info');
+        return true;
+      } catch {
+        setMediaFolders(prevFolders);
+        return false;
+      }
+    }
 
     try {
       const imgsSnap = await getDocs(collection(db, 'mediaFolders', cleanFolderId, 'images'));
@@ -1622,14 +2132,35 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const clearMediaFolder = async (folderId: string): Promise<boolean> => {
-    if (!auth.currentUser?.uid || !isCloudAdmin) {
-      showToast('Admin Sign-In Required', 'Please sign in to clear folders.', 'warning');
+    const uid = auth.currentUser?.uid;
+    const passkey = getAdminSessionPasskey();
+    if ((!uid || !isCloudAdmin) && !isPasskeyAdmin) {
+      showToast('Admin Unlock Required', 'Please unlock the Admin Portal to clear folders.', 'warning');
       return false;
     }
     const cleanFolderId = sanitizeFirestoreId(folderId, 'folder');
     const target = mediaFolders.find((f) => f.id === cleanFolderId);
     const prevFolders = mediaFolders;
     setMediaFolders((prev) => prev.map((f) => (f.id === cleanFolderId ? { ...f, images: [] } : f)));
+
+    if (!uid || !isCloudAdmin) {
+      try {
+        const res = await fetch(`/api/media/folders/${encodeURIComponent(folderId)}/images`, {
+          method: 'DELETE',
+          headers: { 'x-admin-passkey': passkey }
+        });
+        if (!res.ok) {
+          setMediaFolders(prevFolders);
+          showToast('Cloud Sync Required', 'Click "Connect Cloud Sync" to clear cloud folders.', 'warning');
+          return false;
+        }
+        showToast('Folder Cleared', `All images removed from "${target?.name || 'folder'}".`, 'info');
+        return true;
+      } catch {
+        setMediaFolders(prevFolders);
+        return false;
+      }
+    }
 
     try {
       const imgsSnap = await getDocs(collection(db, 'mediaFolders', cleanFolderId, 'images'));
@@ -1648,8 +2179,9 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const addImagesToFolder = async (folderId: string, files: File[]): Promise<MediaFolderImage[]> => {
     const uid = auth.currentUser?.uid;
-    if (!uid || !isCloudAdmin) {
-      showToast('Admin Sign-In Required', 'Please sign in with Google to upload folder photos.', 'warning');
+    const passkey = getAdminSessionPasskey();
+    if ((!uid || !isCloudAdmin) && !isPasskeyAdmin) {
+      showToast('Admin Unlock Required', 'Please unlock the Admin Portal to upload folder photos.', 'warning');
       return [];
     }
 
@@ -1664,6 +2196,55 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (imageFiles.length === 0) {
       showToast('No Images Found', 'Please select JPG, PNG, or WEBP image files.', 'warning');
       return [];
+    }
+
+    if (!uid || !isCloudAdmin) {
+      const itemsPayload: Array<{ dataUrl: string; filename: string }> = [];
+      for (const file of imageFiles) {
+        try {
+          const dataUrl = await optimizeImageToDataUrl(file);
+          itemsPayload.push({ dataUrl, filename: file.name });
+        } catch {
+          // skip unreadable image
+        }
+      }
+      if (itemsPayload.length === 0) {
+        showToast('Upload Failed', 'Could not read selected image files.', 'warning');
+        return [];
+      }
+      try {
+        const res = await fetch(`/api/media/folders/${encodeURIComponent(folderId)}/images`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-admin-passkey': passkey },
+          body: JSON.stringify({ items: itemsPayload })
+        });
+        const ct = res.headers.get('content-type') || '';
+        if (!res.ok || !ct.includes('application/json')) {
+          showToast(
+            'Cloud Sync Required',
+            'Click "Connect Cloud Sync" in the Admin sidebar to upload folder images.',
+            'warning'
+          );
+          return [];
+        }
+        const data = (await res.json()) as { addedImages?: MediaFolderImage[]; mediaFolders?: MediaFolder[] };
+        if (Array.isArray(data.mediaFolders)) {
+          setMediaFolders(data.mediaFolders);
+        }
+        const added = data.addedImages || [];
+        if (added.length > 0) {
+          showToast(
+            'Photos Added to Folder',
+            `${added.length} ${added.length === 1 ? 'photo' : 'photos'} saved cleanly.`,
+            'success',
+            added[0].url
+          );
+        }
+        return added;
+      } catch {
+        showToast('Upload Failed', 'Could not save selected images to folder.', 'warning');
+        return [];
+      }
     }
 
     // Ensure parent folder exists before creating subcollection image docs
@@ -1770,8 +2351,10 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const deleteImageFromFolder = async (folderId: string, imageId: string): Promise<boolean> => {
-    if (!auth.currentUser?.uid || !isCloudAdmin) {
-      showToast('Admin Sign-In Required', 'Please sign in to delete folder images.', 'warning');
+    const uid = auth.currentUser?.uid;
+    const passkey = getAdminSessionPasskey();
+    if ((!uid || !isCloudAdmin) && !isPasskeyAdmin) {
+      showToast('Admin Unlock Required', 'Please unlock the Admin Portal to delete folder images.', 'warning');
       return false;
     }
     const cleanFolderId = sanitizeFirestoreId(folderId, 'folder');
@@ -1779,9 +2362,33 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const prevFolders = mediaFolders;
     setMediaFolders((prev) =>
       prev.map((f) =>
-        f.id === cleanFolderId ? { ...f, images: f.images.filter((img) => img.id !== cleanImageId) } : f
+        f.id === cleanFolderId || f.id === folderId
+          ? { ...f, images: f.images.filter((img) => img.id !== cleanImageId && img.id !== imageId) }
+          : f
       )
     );
+
+    if (!uid || !isCloudAdmin) {
+      try {
+        const res = await fetch(
+          `/api/media/folders/${encodeURIComponent(folderId)}/images/${encodeURIComponent(imageId)}`,
+          {
+            method: 'DELETE',
+            headers: { 'x-admin-passkey': passkey }
+          }
+        );
+        if (!res.ok) {
+          setMediaFolders(prevFolders);
+          showToast('Cloud Sync Required', 'Click "Connect Cloud Sync" to delete folder images.', 'warning');
+          return false;
+        }
+        showToast('Image Deleted', 'Photo removed from folder.', 'info');
+        return true;
+      } catch {
+        setMediaFolders(prevFolders);
+        return false;
+      }
+    }
 
     try {
       await deleteDoc(doc(db, 'mediaFolders', cleanFolderId, 'images', cleanImageId));
@@ -1793,7 +2400,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Order & Customer Management (Admin -> Cloud Firestore)
+  // Order & Customer Management (Admin -> Cloud Firestore + Server API)
   const updateOrderStatus = (orderId: string, status: Order['status'], trackingNumber?: string, note?: string) => {
     const cleanOrderId = sanitizeFirestoreId(orderId, 'ord');
     const existingOrder = orders.find((o) => o.id === orderId);
@@ -1801,6 +2408,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       trackingNumber !== undefined ? trackingNumber : existingOrder?.trackingNumber || '',
       100
     );
+    const passkey = getAdminSessionPasskey();
 
     setOrders((prev) =>
       prev.map((o) =>
@@ -1913,6 +2521,33 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // Live /orderStatus snapshot still pushes confirmation straight to customer UI
           });
       }
+      if (passkey) {
+        void fetch(`/api/orders/${encodeURIComponent(orderId)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'x-admin-passkey': passkey },
+          body: JSON.stringify({ status, trackingNumber: resolvedTracking, note })
+        }).catch(() => {});
+      }
+    } else if (isPasskeyAdmin && passkey) {
+      void fetch(`/api/orders/${encodeURIComponent(orderId)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'x-admin-passkey': passkey },
+        body: JSON.stringify({ status, trackingNumber: resolvedTracking, note })
+      }).catch(() => {});
+
+      if (status !== 'Processing' && existingOrder) {
+        const updatedOrderObj: Order = {
+          ...existingOrder,
+          receiptNumber: existingOrder.receiptNumber || formatReceiptNumber(cleanOrderId),
+          status,
+          trackingNumber: resolvedTracking
+        };
+        void fetch('/api/notifications/order-confirmed', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updatedOrderObj)
+        }).catch(() => {});
+      }
     }
 
     showToast(
@@ -1956,6 +2591,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const deleteOrder = (orderId: string) => {
     const cleanOrderId = sanitizeFirestoreId(orderId, 'ord');
+    const passkey = getAdminSessionPasskey();
     setOrders((prev) => prev.filter((o) => o.id !== orderId));
     setAdminAlerts((prev) => prev.filter((a) => a.orderId !== cleanOrderId));
     if (isCloudAdmin) {
@@ -1969,11 +2605,18 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // ignore if alert doc absent
       });
     }
+    if (passkey) {
+      void fetch(`/api/orders/${encodeURIComponent(orderId)}`, {
+        method: 'DELETE',
+        headers: { 'x-admin-passkey': passkey }
+      }).catch(() => {});
+    }
     showToast('Order Removed', `Order ${orderId} deleted from records.`, 'info');
   };
 
   const setAdminNotesForOrder = (orderId: string, note: string) => {
     const cleanOrderId = sanitizeFirestoreId(orderId, 'ord');
+    const passkey = getAdminSessionPasskey();
     setAdminNotes((prev) => ({ ...prev, [orderId]: note }));
     const uid = auth.currentUser?.uid;
     if (uid && isCloudAdmin) {
@@ -1993,6 +2636,13 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }).catch((err) => {
         handleFirestoreError(err, OperationType.WRITE, `adminNotes/${cleanOrderId}`);
       });
+    }
+    if (passkey) {
+      void fetch(`/api/admin-notes/${encodeURIComponent(orderId)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'x-admin-passkey': passkey },
+        body: JSON.stringify({ note })
+      }).catch(() => {});
     }
   };
 
@@ -2020,13 +2670,19 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         authReady,
         firebaseUser,
         isCloudAdmin,
+        isPasskeyAdmin,
+        passkeyAuthChecking,
         adminAuthError,
         unauthorizedDomain,
         emailPasswordProviderDisabled,
         pendingVerificationEmail,
         canAttemptFirstTimeSetup,
+        unlockWithSetupKey,
         signInWithEmailAdmin,
         registerFirstAdminAccount,
+        sendAdminPasswordReset,
+        updateAdminPassword,
+        updateAdminEmailAddress,
         resendAdminVerificationEmail,
         refreshAdminVerificationStatus,
         signInWithGoogleAdmin,

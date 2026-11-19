@@ -15,7 +15,6 @@ import {
   ChevronLeft,
   ChevronRight,
   ExternalLink,
-  Copy,
   LogOut,
   AlertCircle,
   Loader2,
@@ -24,17 +23,16 @@ import {
   Eye,
   EyeOff,
   Mail,
-  Lock,
   BellRing,
   FileText,
   Download,
   Printer,
-  CheckCircle2
+  CheckCircle2,
+  KeyRound
 } from 'lucide-react';
 import { useShop } from '../context/ShopContext';
 import { Product, Order } from '../types';
 import { CATEGORIES } from '../data/categories';
-import { ADMIN_EMAIL, ADMIN_EMAILS, FIREBASE_PROJECT_ID } from '../firebase';
 import { BANAYA_CONTACT_EMAIL } from '../config/storeContact';
 import { getPriceForProductWeight } from '../utils/pricing';
 import {
@@ -67,18 +65,12 @@ const ORDER_STATUSES: Order['status'][] = [
 
 export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen, onClose }) => {
   const {
-    authReady,
     firebaseUser,
     isCloudAdmin,
+    isPasskeyAdmin,
+    passkeyAuthChecking,
     adminAuthError,
-    unauthorizedDomain,
-    emailPasswordProviderDisabled,
-    pendingVerificationEmail,
-    canAttemptFirstTimeSetup,
-    signInWithEmailAdmin,
-    registerFirstAdminAccount,
-    resendAdminVerificationEmail,
-    refreshAdminVerificationStatus,
+    unlockWithSetupKey,
     signInWithGoogleAdmin,
     signOutAdmin,
     clearAdminAuthError,
@@ -109,12 +101,10 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
   } = useShop();
 
   const [activeTab, setActiveTab] = useState<AdminTab>('products');
-  const [loginEmail, setLoginEmail] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [isSigningIn, setIsSigningIn] = useState(false);
-  const [isCheckingVerification, setIsCheckingVerification] = useState(false);
-  const [domainCopied, setDomainCopied] = useState(false);
+  const [setupKeyInput, setSetupKeyInput] = useState('');
+  const [showSetupKey, setShowSetupKey] = useState(false);
+  const [isUnlocking, setIsUnlocking] = useState(false);
+  const [isConnectingCloud, setIsConnectingCloud] = useState(false);
 
   // Products Tab State
   const [productSearch, setProductSearch] = useState('');
@@ -300,51 +290,28 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
 
   if (!isOpen) return null;
 
-  const handleEmailSignIn = async (e: React.FormEvent) => {
+  const handleSetupKeyUnlock = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsSigningIn(true);
+    if (passkeyAuthChecking || isUnlocking) return;
+    setIsUnlocking(true);
     try {
-      await signInWithEmailAdmin(loginEmail, loginPassword);
+      const ok = await unlockWithSetupKey(setupKeyInput);
+      if (ok) {
+        setSetupKeyInput('');
+        setShowSetupKey(false);
+      }
     } finally {
-      setIsSigningIn(false);
+      setIsUnlocking(false);
     }
   };
 
-  const handleFirstTimeRegister = async () => {
-    setIsSigningIn(true);
-    try {
-      await registerFirstAdminAccount(loginEmail, loginPassword);
-    } finally {
-      setIsSigningIn(false);
-    }
-  };
-
-  const handleRefreshVerification = async () => {
-    setIsCheckingVerification(true);
-    try {
-      await refreshAdminVerificationStatus();
-    } finally {
-      setIsCheckingVerification(false);
-    }
-  };
-
-  const handleGoogleSignIn = async () => {
-    setIsSigningIn(true);
+  const handleConnectCloudSync = async () => {
+    if (isConnectingCloud) return;
+    setIsConnectingCloud(true);
     try {
       await signInWithGoogleAdmin();
     } finally {
-      setIsSigningIn(false);
-    }
-  };
-
-  const handleCopyDomain = async () => {
-    if (!unauthorizedDomain) return;
-    try {
-      await navigator.clipboard.writeText(unauthorizedDomain);
-      setDomainCopied(true);
-      setTimeout(() => setDomainCopied(false), 2500);
-    } catch {
-      showToast('Copy Domain', `Copy this hostname manually: ${unauthorizedDomain}`, 'info');
+      setIsConnectingCloud(false);
     }
   };
 
@@ -637,8 +604,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
     setEditingOrder(null);
   };
 
-  // ==================== LOGIN SCREEN ====================
-  if (!isCloudAdmin) {
+  // ==================== SETUP KEY LOGIN SCREEN ====================
+  if (!isPasskeyAdmin) {
     return (
       <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
         <div className="relative w-full max-w-md bg-white rounded-xl border border-slate-200 shadow-2xl overflow-hidden my-auto">
@@ -663,55 +630,12 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
                   Banaya Admin Portal
                 </h2>
                 <p className="text-xs text-slate-500">
-                  Authorized administrator sign-in required
+                  Enter Administrator Setup Key to continue
                 </p>
               </div>
             </div>
 
             <div className="border-t border-slate-200 pt-5 space-y-4">
-              {firebaseUser && !isCloudAdmin && !pendingVerificationEmail && (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3.5 text-xs text-amber-900 space-y-1.5">
-                  <p className="font-medium">
-                    Signed in as {firebaseUser.email || 'unauthorized account'}
-                  </p>
-                  <p className="text-amber-800">
-                    Authorized store admins:{' '}
-                    <span className="font-mono font-medium">{ADMIN_EMAILS.join(', ')}</span>
-                  </p>
-                </div>
-              )}
-
-              {pendingVerificationEmail && (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 space-y-3 text-xs text-amber-950">
-                  <p className="font-semibold">Verify {pendingVerificationEmail}</p>
-                  <p className="text-amber-900 leading-relaxed">
-                    Open your <span className="font-mono">{pendingVerificationEmail}</span> inbox and click the Firebase verification link, then click Continue below.
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      disabled={isCheckingVerification}
-                      onClick={() => void handleRefreshVerification()}
-                      className="h-8 px-3 rounded-md bg-[#1B3624] hover:bg-[#14291b] text-white font-medium inline-flex items-center gap-1.5 cursor-pointer"
-                    >
-                      {isCheckingVerification ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <Check className="w-3.5 h-3.5" />
-                      )}
-                      <span>I&apos;ve Verified &mdash; Continue</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void resendAdminVerificationEmail()}
-                      className="h-8 px-3 rounded-md border border-amber-300 bg-white hover:bg-amber-100/60 text-amber-900 font-medium cursor-pointer"
-                    >
-                      Resend Link
-                    </button>
-                  </div>
-                </div>
-              )}
-
               {adminAuthError && (
                 <div className="rounded-lg border border-red-200 bg-red-50 p-3.5 text-xs text-red-800 flex items-start gap-2.5">
                   <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
@@ -728,170 +652,50 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
                 </div>
               )}
 
-              {emailPasswordProviderDisabled && (
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-2.5 text-xs text-slate-700">
-                  <p className="font-semibold text-slate-900">
-                    1-Time Firebase Setup: Enable Email/Password Sign-In
-                  </p>
-                  <ol className="list-decimal pl-4 space-y-1 text-slate-600 leading-relaxed">
-                    <li>Open Firebase Console Authentication Sign-in methods.</li>
-                    <li>Select <span className="font-medium text-slate-900">Email/Password</span>, toggle <span className="font-medium text-slate-900">Enable</span>, and click <span className="font-medium text-slate-900">Save</span>.</li>
-                    <li>Return here and sign in with <span className="font-mono text-slate-900">{loginEmail || ADMIN_EMAIL}</span>.</li>
-                  </ol>
-                  <a
-                    href={`https://console.firebase.google.com/project/${FIREBASE_PROJECT_ID}/authentication/providers`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 text-[#1B3624] font-medium hover:underline pt-1"
-                  >
-                    Enable Email/Password in Firebase Console
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
-                </div>
-              )}
-
-              {canAttemptFirstTimeSetup && (
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5 space-y-2.5 text-xs text-slate-700">
-                  <p className="font-medium text-slate-900">
-                    First time setting up {loginEmail || ADMIN_EMAIL}?
-                  </p>
-                  <p className="text-slate-600">
-                    If you haven&apos;t registered this admin login in Firebase Authentication yet, initialize it once with your entered credentials:
-                  </p>
-                  <button
-                    type="button"
-                    disabled={isSigningIn}
-                    onClick={() => void handleFirstTimeRegister()}
-                    className="h-8 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-100 text-slate-800 font-medium cursor-pointer"
-                  >
-                    Create {loginEmail || ADMIN_EMAIL} Login
-                  </button>
-                </div>
-              )}
-
-              {unauthorizedDomain && (
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3 text-xs text-slate-700">
-                  <p className="font-semibold text-slate-900">
-                    1-Time Domain Allowlist Step Needed
-                  </p>
-                  <p className="leading-relaxed">
-                    Add your live hostname to Firebase Console under{' '}
-                    <span className="font-medium">Authentication &rarr; Settings &rarr; Authorized domains</span>:
-                  </p>
-                  <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-md px-2.5 py-1.5">
-                    <code className="flex-1 font-mono text-[11px] text-slate-900 truncate">
-                      {unauthorizedDomain}
-                    </code>
-                    <button
-                      type="button"
-                      onClick={handleCopyDomain}
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-800 font-medium transition-colors"
-                    >
-                      {domainCopied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                      {domainCopied ? 'Copied' : 'Copy'}
-                    </button>
-                  </div>
-                  <a
-                    href={`https://console.firebase.google.com/project/${FIREBASE_PROJECT_ID}/authentication/settings`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 text-[#1B3624] font-medium hover:underline"
-                  >
-                    Open Firebase Authentication Settings
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
-                </div>
-              )}
-
-              <form onSubmit={handleEmailSignIn} className="space-y-3.5">
+              <form onSubmit={handleSetupKeyUnlock} className="space-y-4" autoComplete="off">
                 <div>
-                  <label htmlFor="admin-email-input" className="block text-xs font-medium text-slate-700 mb-1">
-                    Admin Mail ID
+                  <label htmlFor="admin-setup-key-input" className="block text-xs font-medium text-slate-700 mb-1.5">
+                    Administrator Setup Key
                   </label>
                   <div className="relative">
-                    <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <KeyRound className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                     <input
-                      id="admin-email-input"
-                      type="email"
+                      id="admin-setup-key-input"
+                      type={showSetupKey ? 'text' : 'password'}
                       required
-                      autoComplete="email"
-                      value={loginEmail}
-                      onChange={(e) => setLoginEmail(e.target.value)}
-                      placeholder={ADMIN_EMAIL}
-                      className="w-full h-10 pl-9 pr-3 rounded-lg border border-slate-200 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-[#1B3624]"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label htmlFor="admin-password-input" className="block text-xs font-medium text-slate-700 mb-1">
-                    Password
-                  </label>
-                  <div className="relative">
-                    <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      id="admin-password-input"
-                      type={showPassword ? 'text' : 'password'}
-                      required
-                      autoComplete="current-password"
-                      value={loginPassword}
-                      onChange={(e) => setLoginPassword(e.target.value)}
-                      placeholder="Enter admin password"
-                      className="w-full h-10 pl-9 pr-10 rounded-lg border border-slate-200 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-[#1B3624]"
+                      autoComplete="off"
+                      autoFocus
+                      value={setupKeyInput}
+                      onChange={(e) => setSetupKeyInput(e.target.value)}
+                      placeholder="Enter Setup Key"
+                      className="w-full h-11 pl-9 pr-10 rounded-lg border border-slate-200 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-[#1B3624]"
                     />
                     <button
                       type="button"
-                      onClick={() => setShowPassword((v) => !v)}
-                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                      onClick={() => setShowSetupKey((v) => !v)}
+                      aria-label={showSetupKey ? 'Hide setup key' : 'Show setup key'}
                       className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600"
                     >
-                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      {showSetupKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
                   </div>
                 </div>
 
                 <button
                   type="submit"
-                  disabled={!authReady || isSigningIn}
+                  disabled={passkeyAuthChecking || isUnlocking}
                   className="w-full h-10 rounded-lg bg-[#1B3624] hover:bg-[#14291b] disabled:opacity-60 text-white text-sm font-medium flex items-center justify-center gap-2 transition-colors cursor-pointer"
                 >
-                  {!authReady || isSigningIn ? (
+                  {passkeyAuthChecking || isUnlocking ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>{!authReady ? 'Checking session...' : 'Signing in...'}</span>
+                      <span>{passkeyAuthChecking ? 'Verifying session...' : 'Verifying Setup Key...'}</span>
                     </>
                   ) : (
-                    <span>Sign In to Admin Portal</span>
+                    <span>Unlock Admin Portal</span>
                   )}
                 </button>
               </form>
-
-              <div className="relative flex items-center py-1">
-                <div className="flex-1 border-t border-slate-200" />
-                <span className="px-3 text-[11px] font-medium uppercase tracking-wider text-slate-400">
-                  or
-                </span>
-                <div className="flex-1 border-t border-slate-200" />
-              </div>
-
-              <button
-                type="button"
-                disabled={!authReady || isSigningIn}
-                onClick={handleGoogleSignIn}
-                className="w-full h-10 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-60 text-slate-700 text-xs font-medium flex items-center justify-center gap-2 transition-colors cursor-pointer"
-              >
-                <span>Sign in with Google (Authorized Admin)</span>
-              </button>
-
-              {firebaseUser && (
-                <button
-                  type="button"
-                  onClick={() => void signOutAdmin()}
-                  className="w-full h-9 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-medium text-slate-600 transition-colors"
-                >
-                  Sign Out ({firebaseUser.email})
-                </button>
-              )}
             </div>
           </div>
         </div>
@@ -988,16 +792,16 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
             })}
           </nav>
 
-          {/* Cloud Status & Account */}
-          <div className="hidden lg:block p-3.5 border-t border-slate-200 space-y-3 bg-slate-50">
+          {/* Cloud Status & Session */}
+          <div className="hidden lg:block p-3.5 border-t border-slate-200 space-y-2.5 bg-slate-50">
             <div className="flex items-center justify-between text-xs">
               <span className="flex items-center gap-1.5 text-slate-600 font-medium">
                 <span
                   className={`w-2 h-2 rounded-full ${
-                    serverSynced ? 'bg-emerald-500' : 'bg-amber-500'
+                    isCloudAdmin || serverSynced ? 'bg-emerald-500' : 'bg-amber-500'
                   }`}
                 />
-                {serverSynced ? 'Cloud Live Sync' : 'Connecting...'}
+                {isCloudAdmin ? 'Cloud Live Sync' : serverSynced ? 'Setup Key Active' : 'Connecting...'}
               </span>
               {lastSyncedAt && (
                 <span className="text-[11px] font-mono tabular-nums text-slate-400">
@@ -1008,15 +812,32 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
                 </span>
               )}
             </div>
+            {!isCloudAdmin && (
+              <button
+                type="button"
+                disabled={isConnectingCloud}
+                onClick={() => void handleConnectCloudSync()}
+                className="w-full h-8 px-2.5 rounded-md border border-slate-200 bg-white hover:bg-slate-100 text-[11px] font-medium text-slate-700 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+              >
+                {isConnectingCloud ? (
+                  <>
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span>Connecting...</span>
+                  </>
+                ) : (
+                  <span>Connect Cloud Sync</span>
+                )}
+              </button>
+            )}
             <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-200">
-              <span className="text-xs text-slate-600 truncate" title={firebaseUser?.email || ''}>
-                {firebaseUser?.email || ADMIN_EMAIL}
+              <span className="text-xs text-slate-600 truncate" title={firebaseUser?.email || 'Setup Key Session'}>
+                {isCloudAdmin && firebaseUser?.email ? firebaseUser.email : 'Setup Key Session'}
               </span>
               <button
                 type="button"
                 onClick={() => void signOutAdmin()}
-                title="Sign Out"
-                className="p-1.5 rounded-md text-slate-500 hover:text-red-600 hover:bg-red-50 transition-colors shrink-0"
+                title="Lock Admin Portal"
+                className="p-1.5 rounded-md text-slate-500 hover:text-red-600 hover:bg-red-50 transition-colors shrink-0 cursor-pointer"
               >
                 <LogOut className="w-4 h-4" />
               </button>

@@ -102,7 +102,8 @@ const PORT = parseCliPort() || Number(process.env.PORT) || 3000;
 const ROOT_DIR = process.cwd();
 const DIST_DIR = path.join(ROOT_DIR, 'dist');
 const DEFAULT_PRODUCTS_PATH = path.join(ROOT_DIR, 'src', 'data', 'products.json');
-const ADMIN_PASSKEY = process.env.ADMIN_PASSKEY || 'banayana00123';
+const DEFAULT_ADMIN_PASSKEY_SHA256 =
+  'c8c3ffefa5f6d97e06f87db28be0745ad1e960da5bfa78c8430a8e4a4b670113';
 const ADMIN_ALERT_EMAIL = process.env.ADMIN_ALERT_EMAIL || 'banayaenterprise100@gmail.com';
 
 interface SmtpRuntimeStatus {
@@ -505,10 +506,25 @@ function broadcastStoreUpdate(reason: string): void {
   }
 }
 
+function isValidAdminPasskey(candidate: string): boolean {
+  const trimmed = candidate.trim();
+  if (!trimmed) return false;
+  const envPasskey = sanitizeEnvSecret(process.env.ADMIN_PASSKEY);
+  const expectedHash = envPasskey
+    ? crypto.createHash('sha256').update(envPasskey, 'utf8').digest('hex')
+    : DEFAULT_ADMIN_PASSKEY_SHA256;
+  const candidateBuf = Buffer.from(
+    crypto.createHash('sha256').update(trimmed, 'utf8').digest('hex'),
+    'utf8'
+  );
+  const expectedBuf = Buffer.from(expectedHash, 'utf8');
+  return candidateBuf.length === expectedBuf.length && crypto.timingSafeEqual(candidateBuf, expectedBuf);
+}
+
 function requireAdmin(req: Request, res: Response, next: NextFunction): void {
-  const passkey = req.header('x-admin-passkey');
-  if (passkey !== ADMIN_PASSKEY) {
-    res.status(401).json({ error: 'Unauthorized: invalid admin passkey' });
+  const passkey = req.header('x-admin-passkey') || '';
+  if (!isValidAdminPasskey(passkey)) {
+    res.status(401).json({ error: 'Unauthorized: invalid admin setup key' });
     return;
   }
   next();
@@ -539,16 +555,16 @@ async function startServer(): Promise<void> {
     res.json({ ok: true, updatedAt: storeState.updatedAt });
   });
 
-  // Verify admin passkey server-side without exposing passkey in client UI
+  // Verify admin setup key server-side without exposing key in client UI
   app.post('/api/admin/verify', (req: Request, res: Response) => {
     const bodyPasskey = typeof req.body?.passkey === 'string' ? req.body.passkey : '';
     const headerPasskey = req.header('x-admin-passkey') || '';
     const candidate = bodyPasskey || headerPasskey;
-    if (candidate === ADMIN_PASSKEY) {
+    if (isValidAdminPasskey(candidate)) {
       res.json({ ok: true });
       return;
     }
-    res.status(401).json({ error: 'Invalid administrator passkey' });
+    res.status(401).json({ ok: false, error: 'Invalid administrator setup key' });
   });
 
   // Read full live storefront state

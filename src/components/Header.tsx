@@ -3,7 +3,7 @@ import { Search, ShoppingBag, Heart, User, Menu, X, Sparkles, Phone, ChevronRigh
 import { useShop } from '../context/ShopContext';
 
 export const Header: React.FC = () => {
-  const { cartCount, wishlist, setActiveModal, setSelectedCategory, isCloudAdmin, unreadAlertsCount } = useShop();
+  const { cartCount, wishlist, setActiveModal, setSelectedCategory, isPasskeyAdmin, unreadAlertsCount } = useShop();
   const [isScrolled, setIsScrolled] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -61,7 +61,7 @@ export const Header: React.FC = () => {
             >
               <KeyRound className="w-3 h-3 text-amber-300" />
               <span>Admin Portal</span>
-              {isCloudAdmin && unreadAlertsCount > 0 && (
+              {isPasskeyAdmin && unreadAlertsCount > 0 && (
                 <span className="px-1.5 py-0.2 rounded-full bg-amber-400 text-slate-950 text-[10px] font-extrabold tabular-nums">
                   {unreadAlertsCount}
                 </span>
@@ -347,7 +347,7 @@ export const Header: React.FC = () => {
               >
                 <KeyRound className="w-4 h-4 text-amber-300" />
                 <span>Admin Management Portal</span>
-                {isCloudAdmin && unreadAlertsCount > 0 && (
+                {isPasskeyAdmin && unreadAlertsCount > 0 && (
                   <span className="px-1.5 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[10px] font-extrabold tabular-nums">
                     {unreadAlertsCount}
                   </span>
