@@ -28,9 +28,12 @@ import {
   Download,
   Printer,
   CheckCircle2,
-  KeyRound
+  KeyRound,
+  Cloud,
+  Copy
 } from 'lucide-react';
 import { useShop } from '../context/ShopContext';
+import { FIREBASE_PROJECT_ID } from '../firebase';
 import { Product, Order } from '../types';
 import { CATEGORIES } from '../data/categories';
 import { BANAYA_CONTACT_EMAIL } from '../config/storeContact';
@@ -70,6 +73,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
     isPasskeyAdmin,
     passkeyAuthChecking,
     adminAuthError,
+    unauthorizedDomain,
     unlockWithSetupKey,
     signInWithGoogleAdmin,
     signOutAdmin,
@@ -106,6 +110,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
   const [showSetupKey, setShowSetupKey] = useState(false);
   const [isUnlocking, setIsUnlocking] = useState(false);
   const [isConnectingCloud, setIsConnectingCloud] = useState(false);
+  const [copiedDomain, setCopiedDomain] = useState(false);
 
   // Products Tab State
   const [productSearch, setProductSearch] = useState('');
@@ -328,6 +333,17 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
       await signInWithGoogleAdmin();
     } finally {
       setIsConnectingCloud(false);
+    }
+  };
+
+  const handleCopyUnauthorizedDomain = async (domain: string) => {
+    try {
+      await navigator.clipboard.writeText(domain);
+      setCopiedDomain(true);
+      showToast('Domain Copied', `Copied "${domain}" to clipboard.`, 'success');
+      setTimeout(() => setCopiedDomain(false), 2500);
+    } catch {
+      showToast('Copy Domain', `Add "${domain}" in Firebase Authorized Domains.`, 'info');
     }
   };
 
@@ -872,12 +888,33 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
             </div>
 
             <div className="flex items-center gap-2">
+              {!isCloudAdmin ? (
+                <button
+                  type="button"
+                  disabled={isConnectingCloud}
+                  onClick={() => void handleConnectCloudSync()}
+                  className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 text-xs font-medium text-amber-950 transition-colors cursor-pointer"
+                >
+                  {isConnectingCloud ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Cloud className="w-3.5 h-3.5 text-amber-700" />
+                  )}
+                  <span>{isConnectingCloud ? 'Connecting...' : 'Connect Cloud Sync'}</span>
+                </button>
+              ) : (
+                <span className="lg:hidden inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-[11px] font-medium text-emerald-800">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                  Cloud Live
+                </span>
+              )}
               <button
                 type="button"
                 onClick={handleViewLiveStore}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
               >
-                <span>View Live Website</span>
+                <span className="hidden sm:inline">View Live Website</span>
+                <span className="sm:hidden">Live Site</span>
                 <ArrowUpRight className="w-3.5 h-3.5" />
               </button>
               <button
@@ -900,6 +937,59 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
 
           {/* Scrollable Workspace Content */}
           <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
+            {/* Cloud Sync Error / Domain Authorization Banner */}
+            {(adminAuthError || unauthorizedDomain) && !isCloudAdmin && (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-950 space-y-2.5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-2.5 min-w-0">
+                    <AlertCircle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <p className="font-semibold text-amber-950">
+                        Cloud Sync Connection Needed
+                      </p>
+                      <p className="leading-relaxed text-amber-900">
+                        {adminAuthError ||
+                          `Authorize domain "${unauthorizedDomain}" in Firebase Authentication → Settings → Authorized domains.`}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={clearAdminAuthError}
+                    aria-label="Dismiss Cloud Sync notice"
+                    className="p-1 text-amber-700 hover:text-amber-950 shrink-0 cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {unauthorizedDomain && (
+                  <div className="flex flex-wrap items-center gap-2 pl-6">
+                    <code className="px-2 py-1 rounded bg-white border border-amber-200 font-mono text-[11px] text-slate-900">
+                      {unauthorizedDomain}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => void handleCopyUnauthorizedDomain(unauthorizedDomain)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-white border border-amber-300 hover:bg-amber-100 text-[11px] font-medium text-amber-950 cursor-pointer"
+                    >
+                      {copiedDomain ? <Check className="w-3 h-3 text-emerald-700" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedDomain ? 'Copied' : 'Copy Domain'}</span>
+                    </button>
+                    <a
+                      href={`https://console.firebase.google.com/project/${FIREBASE_PROJECT_ID}/authentication/settings`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-[#1B3624] hover:bg-[#14291b] text-white text-[11px] font-medium"
+                    >
+                      <span>Open Firebase Authorized Domains</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Live Sync Confirmation Banner */}
             {lastSavedBanner && (
               <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
@@ -2110,6 +2200,50 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
                 <X className="w-5 h-5" />
               </button>
             </div>
+
+            {!isCloudAdmin && (
+              <div className="shrink-0 px-5 py-2.5 bg-amber-50 border-b border-amber-200 flex flex-wrap items-center justify-between gap-2 text-xs text-amber-950">
+                <div className="flex items-start gap-2 min-w-0 flex-1">
+                  <AlertCircle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                  <p className="leading-relaxed">
+                    {adminAuthError
+                      ? adminAuthError
+                      : 'Connect Google Cloud Sync to publish new products live across all visitor devices.'}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {unauthorizedDomain && (
+                    <a
+                      href={`https://console.firebase.google.com/project/${FIREBASE_PROJECT_ID}/authentication/settings`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-white border border-amber-300 text-[11px] font-medium text-amber-950 hover:bg-amber-100"
+                    >
+                      <span>Authorize {unauthorizedDomain}</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    disabled={isConnectingCloud}
+                    onClick={() => void handleConnectCloudSync()}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[#1B3624] hover:bg-[#14291b] disabled:opacity-60 text-white text-xs font-medium cursor-pointer"
+                  >
+                    {isConnectingCloud ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Connecting...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Cloud className="w-3.5 h-3.5" />
+                        <span>Connect Cloud Sync</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Editor Body: 2-Column Split */}
             <div className="flex-1 overflow-y-auto grid grid-cols-1 lg:grid-cols-12">

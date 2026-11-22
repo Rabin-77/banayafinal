@@ -3,6 +3,8 @@ import {
   User,
   onAuthStateChanged,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   sendEmailVerification,
@@ -502,8 +504,32 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     [showToast]
   );
 
-  // Monitor Firebase Auth State
+  // Monitor Firebase Auth State & handle redirect return (mobile Safari/Chrome fallback)
   useEffect(() => {
+    void getRedirectResult(auth)
+      .then((res) => {
+        if (res?.user && isVerifiedAdminEmail(res.user)) {
+          setIsCloudAdmin(true);
+          setAdminAuthError(null);
+          setUnauthorizedDomain(null);
+          showToast('Cloud Admin Connected', 'Real-time live store sync is now active.', 'success');
+        }
+      })
+      .catch((error: unknown) => {
+        const errCode = (error as { code?: string })?.code || '';
+        if (errCode === 'auth/unauthorized-domain') {
+          const host = typeof window !== 'undefined' ? window.location.hostname : '';
+          setUnauthorizedDomain(host);
+          const msg = `Domain "${host}" must be added in Firebase Authentication → Settings → Authorized domains.`;
+          setAdminAuthError(msg);
+          showToast('Domain Authorization Needed', msg, 'warning');
+        } else if (errCode) {
+          const msg = (error as Error)?.message || 'Could not complete Google sign-in redirect.';
+          setAdminAuthError(msg);
+          showToast('Cloud Sync Error', msg, 'warning');
+        }
+      });
+
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setFirebaseUser(user);
       if (!user) {
@@ -536,9 +562,11 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const hasAdminRole = Boolean(user.emailVerified && adminDoc.exists());
         setIsCloudAdmin(hasAdminRole);
         setPendingVerificationEmail(null);
-        if (!hasAdminRole) {
+        if (hasAdminRole) {
+          setAdminAuthError(null);
+        } else {
           setAdminAuthError(
-            `Signed in as ${user.email || 'unknown account'}. Only authorized store admin emails (${ADMIN_EMAILS.join(', ')}) can open the Admin Portal.`
+            `Signed in as ${user.email || 'unknown account'}. Please select an authorized admin Google account (${ADMIN_EMAILS.join(', ')}).`
           );
         }
       } catch {
@@ -549,7 +577,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [showToast]);
 
   const signInWithEmailAdmin = useCallback(
     async (emailInput: string, passwordInput: string): Promise<boolean> => {
@@ -735,25 +763,48 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         showToast('Cloud Admin Connected', 'Real-time live store sync is now active.', 'success');
         return true;
       }
+      await signOut(auth).catch(() => {});
       setIsCloudAdmin(false);
-      setAdminAuthError(
-        `Signed in as ${user.email || 'unknown account'}. Only authorized store admin accounts (${ADMIN_EMAILS.join(', ')}) can open the Admin Portal.`
-      );
+      const msg = `Signed in as ${user.email || 'unknown account'}. Please choose an authorized admin Gmail (${ADMIN_EMAILS.join(', ')}).`;
+      setAdminAuthError(msg);
+      showToast('Wrong Google Account', msg, 'warning');
       return false;
     } catch (error: unknown) {
       const errCode = (error as { code?: string })?.code || '';
+      const isInIframe = typeof window !== 'undefined' && window.self !== window.top;
+
       if (errCode === 'auth/unauthorized-domain') {
         const host = typeof window !== 'undefined' ? window.location.hostname : '';
         setUnauthorizedDomain(host);
-        setAdminAuthError(
-          `This domain (${host}) needs to be allowlisted once in Firebase Authentication → Settings → Authorized domains.`
-        );
-      } else if (errCode === 'auth/popup-blocked') {
-        setAdminAuthError('Browser blocked the Google sign-in popup. Please allow popups for this site and click Sign in again.');
+        const msg = `Add "${host}" in Firebase Console → Authentication → Settings → Authorized domains to enable Cloud Sync here.`;
+        setAdminAuthError(msg);
+        showToast('Domain Not Authorized in Firebase', msg, 'warning');
+      } else if (errCode === 'auth/popup-blocked' || errCode === 'auth/cancelled-popup-request') {
+        if (!isInIframe) {
+          try {
+            showToast('Opening Google Sign-In...', 'Redirecting to Google to complete Cloud Sync.', 'info');
+            await signInWithRedirect(auth, googleProvider);
+            return false;
+          } catch {
+            // fall through to popup error guidance
+          }
+        }
+        const msg =
+          'Browser blocked the Google sign-in popup. Allow popups for this site (or tap Allow) and click Connect Cloud Sync again.';
+        setAdminAuthError(msg);
+        showToast('Popup Blocked', msg, 'warning');
       } else if (errCode === 'auth/popup-closed-by-user') {
-        setAdminAuthError('Sign-in window was closed before completing login.');
+        const msg = 'Google sign-in window was closed before completing Cloud Sync.';
+        setAdminAuthError(msg);
+        showToast('Sign-In Cancelled', msg, 'info');
+      } else if (errCode === 'auth/operation-not-allowed') {
+        const msg = 'Google Sign-In provider is disabled in Firebase Authentication → Sign-in method.';
+        setAdminAuthError(msg);
+        showToast('Google Sign-In Disabled', msg, 'warning');
       } else {
-        setAdminAuthError((error as Error)?.message || 'Failed to sign in with Google.');
+        const msg = (error as Error)?.message || 'Failed to connect Google Cloud Sync.';
+        setAdminAuthError(msg);
+        showToast('Cloud Sync Failed', msg, 'warning');
       }
       return false;
     }

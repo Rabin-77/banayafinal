@@ -5,7 +5,8 @@ import firebaseConfig from '../firebase-applet-config.json';
 
 export const ADMIN_EMAILS = [
   'banayaenterprise100@gmail.com',
-  'banayaenterprises@gmail.com'
+  'banayaenterprises@gmail.com',
+  'rabinmass24@gmail.com'
 ] as const;
 
 export const ADMIN_EMAIL = ADMIN_EMAILS[0];
